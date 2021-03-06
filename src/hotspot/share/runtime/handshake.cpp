@@ -41,6 +41,9 @@
 #include "utilities/filterQueue.inline.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/preserveException.hpp"
+#if INCLUDE_G1GC
+#include "gc/g1/g1EpochUpdater.inline.hpp"
+#endif  // INCLUDE_G1GC
 
 class HandshakeOperation : public CHeapObj<mtThread> {
   friend class HandshakeState;
@@ -566,6 +569,8 @@ HandshakeState::ProcessResult HandshakeState::try_process(HandshakeOperation* ma
     _lock.unlock();
     return HandshakeState::_not_safe;
   }
+
+  G1GC_ONLY(if (UseG1GC) { G1EpochUpdater::update_epoch_self_or_other(_handshakee); })
 
   Thread* current_thread = Thread::current();
 

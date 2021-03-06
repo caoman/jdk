@@ -29,7 +29,8 @@ G1ConcurrentRefineStats::G1ConcurrentRefineStats() :
   _refinement_time(),
   _refined_cards(0),
   _precleaned_cards(0),
-  _dirtied_cards(0)
+  _dirtied_cards(0),
+  _epoch_stats()
 {}
 
 G1ConcurrentRefineStats&
@@ -38,6 +39,7 @@ G1ConcurrentRefineStats::operator+=(const G1ConcurrentRefineStats& other) {
   _refined_cards += other._refined_cards;
   _precleaned_cards += other._precleaned_cards;
   _dirtied_cards += other._dirtied_cards;
+  _epoch_stats += other._epoch_stats;
   return *this;
 }
 
@@ -52,6 +54,7 @@ G1ConcurrentRefineStats::operator-=(const G1ConcurrentRefineStats& other) {
   _refined_cards = clipped_sub(_refined_cards, other._refined_cards);
   _precleaned_cards = clipped_sub(_precleaned_cards, other._precleaned_cards);
   _dirtied_cards = clipped_sub(_dirtied_cards, other._dirtied_cards);
+  _epoch_stats -= other._epoch_stats;
   return *this;
 }
 

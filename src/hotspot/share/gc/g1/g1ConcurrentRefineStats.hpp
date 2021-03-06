@@ -26,6 +26,7 @@
 #define SHARE_GC_G1_G1CONCURRENTREFINESTATS_HPP
 
 #include "memory/allocation.hpp"
+#include "gc/g1/g1EpochSynchronizerStats.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/ticks.hpp"
 
@@ -37,6 +38,8 @@ class G1ConcurrentRefineStats : public CHeapObj<mtGC> {
   size_t _refined_cards;
   size_t _precleaned_cards;
   size_t _dirtied_cards;
+
+  G1EpochSynchronizerStats _epoch_stats;
 
 public:
   G1ConcurrentRefineStats();
@@ -53,6 +56,10 @@ public:
 
   // Number of cards marked dirty and in need of refinement.
   size_t dirtied_cards() const { return _dirtied_cards; }
+
+  // Stats for G1EpochSynchronizer.
+  G1EpochSynchronizerStats* epoch_stats() { return &_epoch_stats; }
+  const G1EpochSynchronizerStats& epoch_stats() const { return _epoch_stats; }
 
   void inc_refinement_time(Tickspan t) { _refinement_time += t; }
   void inc_refined_cards(size_t cards) { _refined_cards += cards; }

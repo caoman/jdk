@@ -473,6 +473,14 @@ static void log_refinement_stats(const char* kind, const G1ConcurrentRefineStats
             stats.refined_cards(),
             stats.precleaned_cards(),
             stats.dirtied_cards());
+  log_debug(gc, refine, stats)
+           ("%s epoch sync: fast: " SIZE_FORMAT "(%.2fms), "
+            "deferred: " SIZE_FORMAT "(%.2fms)",
+            kind,
+            stats.epoch_stats().fast_syncs(),
+            stats.epoch_stats().fast_sync_time().seconds() * MILLIUNITS,
+            stats.epoch_stats().deferred_syncs(),
+            stats.epoch_stats().deferred_sync_time().seconds() * MILLIUNITS);
 }
 
 void G1Policy::record_concurrent_refinement_stats() {

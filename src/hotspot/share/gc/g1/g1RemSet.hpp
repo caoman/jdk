@@ -128,12 +128,16 @@ public:
                                    G1GCPhaseTimes::GCParPhases coderoots_phase,
                                    G1GCPhaseTimes::GCParPhases objcopy_phase);
 
-  // Two methods for concurrent refinement support, executed concurrently to
+  // Three methods for concurrent refinement support, executed concurrently to
   // the mutator:
   // Cleans the card at "*card_ptr_addr" before refinement, returns true iff the
   // card needs later refinement. Note that "*card_ptr_addr" could be updated to
   // a different card due to use of hot card cache.
   bool clean_card_before_refine(CardValue** const card_ptr_addr);
+  // Filters dirty and stale cards after an epoch synchronization handshake,
+  // which may span across a remark pause that frees up regions.
+  // Returns true iff "*card_ptr_addr" is still clean and valid.
+  bool card_is_clean_before_refine(CardValue** const card_ptr_addr);
   // Refine the region corresponding to "card_ptr". Must be called after
   // being filtered by clean_card_before_refine(), and after proper
   // fence/synchronization.

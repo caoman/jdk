@@ -26,6 +26,7 @@
 #define SHARE_GC_G1_G1DIRTYCARDQUEUE_HPP
 
 #include "gc/g1/g1BufferNodeList.hpp"
+#include "gc/g1/g1EpochSynchronizer.hpp"
 #include "gc/g1/g1FreeIdSet.hpp"
 #include "gc/g1/g1CardTable.hpp"
 #include "gc/g1/g1ConcurrentRefineStats.hpp"
@@ -33,6 +34,7 @@
 #include "memory/allocation.hpp"
 #include "memory/padded.hpp"
 #include "utilities/nonblockingQueue.hpp"
+#include "utilities/lockFreeStack.hpp"
 
 class G1ConcurrentRefineThread;
 class G1DirtyCardQueueSet;
@@ -65,6 +67,15 @@ public:
   }
   using PtrQueue::byte_width_of_buf;
 
+};
+
+enum class G1BufferNodeRefineStatus {
+  FULLY_PROCESSED,
+  // Interrupted by a suspend request.
+  PAUSED,
+  // Enqueued to the deferred queue, or nothing was dequeued from
+  // the deferred queue.
+  DEFERRED_OR_NOOP
 };
 
 class G1DirtyCardQueueSet: public PtrQueueSet {
@@ -156,11 +167,59 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
     HeadTail take_all();
   };
 
+  class BufferAndEpoch: public CHeapObj<mtGC> {
+    friend class BufferAndEpochDeallocater;
+    BufferNode* const _node;
+    G1EpochSynchronizer _syncer;
+    BufferAndEpoch* volatile _next;
+
+    NONCOPYABLE(BufferAndEpoch);
+
+    // Deallocation must be done through BufferAndEpoch::Deallocater.
+    ~BufferAndEpoch() {}
+
+  public:
+    static BufferAndEpoch* volatile* next_ptr(BufferAndEpoch& b) { return &b._next; }
+
+    class Deallocater {
+      typedef LockFreeStack<BufferAndEpoch, &BufferAndEpoch::next_ptr> Stack;
+      Stack _pending_free;
+      volatile size_t _pending_free_count;
+
+    public:
+      Deallocater(): _pending_free(), _pending_free_count(0) {}
+      ~Deallocater() {
+        deallocate_all_pending();
+      }
+
+      void deallocate(BufferAndEpoch* b);
+      void deallocate_at_safepoint(BufferAndEpoch* b);
+      void deallocate_all_pending();
+    };
+
+    BufferAndEpoch(BufferNode* node, const G1EpochSynchronizer& syncer) :
+      _node(node), _syncer(syncer), _next(NULL) {
+      assert(node != NULL, "invariant");
+    }
+
+    BufferNode* node() const {
+      return _node;
+    }
+
+    G1EpochSynchronizer& syncer() {
+      return _syncer;
+    }
+
+    BufferAndEpoch* next() const {
+      return _next;
+    }
+  };
+
   // The primary refinement thread, for activation when the processing
   // threshold is reached.  NULL if there aren't any refinement threads.
   G1ConcurrentRefineThread* _primary_refinement_thread;
   DEFINE_PAD_MINUS_SIZE(1, DEFAULT_CACHE_LINE_SIZE, sizeof(G1ConcurrentRefineThread*));
-  // Upper bound on the number of cards in the completed and paused buffers.
+  // Upper bound on the number of cards in the completed, paused, and deferred buffers.
   volatile size_t _num_cards;
   DEFINE_PAD_MINUS_SIZE(2, DEFAULT_CACHE_LINE_SIZE, sizeof(size_t));
   // Buffers ready for refinement.
@@ -171,6 +230,17 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
   // Buffers for which refinement is temporarily paused.
   // PausedBuffers has inner padding, including trailer.
   PausedBuffers _paused;
+  // Buffers that are cleaned but unrefined. They are waiting for an
+  // epoch synchronization handshake to finish.
+  // Has inner padding of one cache line.
+  NonblockingQueue<BufferAndEpoch, &BufferAndEpoch::next_ptr> _deferred;
+  // Add a trailer padding after LockFreeQueue.
+  DEFINE_PAD_MINUS_SIZE(4, DEFAULT_CACHE_LINE_SIZE, sizeof(BufferAndEpoch*));
+
+  // Holder for BufferAndEpoch objects that are pending free, for avoiding
+  // ABA problem in the deferred queue due to potential memory reuse.
+  // It is rarely touched at runtime, so padding is unnecessary.
+  BufferAndEpoch::Deallocater _deferred_deallocator;
 
   G1FreeIdSet _free_ids;
 
@@ -191,30 +261,55 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
   // Thread-safe add a buffer to paused list for next safepoint.
   // precondition: not at safepoint.
   void record_paused_buffer(BufferNode* node);
-  void enqueue_paused_buffers_aux(const HeadTail& paused);
+  void enqueue_buffers_to_completed_aux(const HeadTail& list);
   // Thread-safe transfer paused buffers for previous safepoints to the queue.
   // precondition: not at safepoint.
   void enqueue_previous_paused_buffers();
   // Transfer all paused buffers to the queue.
   // precondition: at safepoint.
-  void enqueue_all_paused_buffers();
+  void enqueue_all_paused_and_deferred_buffers();
 
   void abandon_completed_buffers();
 
-  // Refine the cards in "node" from its index to buffer_size.
+  // Thread-safe attempt to remove and return the first buffer from
+  // the _deferred queue.
+  // Returns NULL if the queue is empty, or if a concurrent push/append
+  // interferes. It uses GlobalCounter critical section to avoid ABA problem.
+  BufferAndEpoch* dequeue_deferred_buffer();
+  // Take all buffers from the deferred queue, convert them from
+  // BufferAndEpoch* to BufferNode*, and redirty the buffers.
+  // Not thread-safe, only called in a safepoint.
+  HeadTail take_all_deferred_buffers();
+  // Get a buffer from the deferred queue, and store it in *node_addr.
+  // Returns true if the deferred buffer is ready to be refined.
+  // False means either *node_addr is NULL so that we have nothing to do,
+  // or there's a suspend request and we need to enqueue the buffer to
+  // the paused queue.
+  bool get_and_synchronize_deferred_buffer(BufferNode** node_addr,
+                                           G1EpochSynchronizerStats* stats);
+
+  // Refine the cards in "*node_addr" from its index to buffer_size.
+  // If "*node_addr" is NULL, try dequeuing a buffer from the deferred
+  // queue and assign it to *node_addr.
   // Stops processing if SuspendibleThreadSet::should_yield() is true.
-  // Returns true if the entire buffer was processed, false if there
-  // is a pending yield request.  The node's index is updated to exclude
-  // the processed elements, e.g. up to the element before processing
-  // stopped, or one past the last element if the entire buffer was
-  // processed. Updates stats.
-  bool refine_buffer(BufferNode* node,
-                     uint worker_id,
-                     G1ConcurrentRefineStats* stats);
+  // Returns G1BufferNodeRefineStatus:
+  //  - FULLY_PROCESSED if the buffer is fully refined;
+  //  - PARTIALLY_PROCESSED if refinement is interrupted by a yield request;
+  //  - DEFERRED if the buffer is cleaned, unrefined and enqueued to the
+  //             deferred queue, or if nothing was popped from the deferred
+  //             queue in the case of *node_addr == NULL.
+  // For FULLY_PROCESSED and PARTIALLY_PROCESSED, the node's index is
+  // updated to exclude the processed elements, e.g. up to the element
+  // before processing stopped, or one past the last element if the entire
+  // buffer was processed. Updates stats.
+  G1BufferNodeRefineStatus refine_buffer(BufferNode** node_addr,
+                                         uint worker_id,
+                                         G1ConcurrentRefineStats* stats);
 
   // Deal with buffer after a call to refine_buffer.  If fully processed,
-  // deallocate the buffer.  Otherwise, record it as paused.
-  void handle_refined_buffer(BufferNode* node, bool fully_processed);
+  // deallocate the buffer.  Otherwise, record it as paused or do nothing
+  // depending on G1BufferNodeRefineStatus.
+  void handle_refined_buffer(BufferNode* node, G1BufferNodeRefineStatus status);
 
   // Thread-safe attempt to remove and return the first buffer from
   // the _completed queue.
@@ -253,6 +348,9 @@ public:
   static void handle_zero_index_for_thread(Thread* t);
 
   virtual void enqueue_completed_buffer(BufferNode* node);
+
+  void enqueue_deferred_buffer(BufferNode* node, const G1EpochSynchronizer& syncer);
+  size_t reset_epoch_in_deferred_buffer();
 
   // Upper bound on the number of cards currently in in this queue set.
   // Read without synchronization.  The value may be high because there

@@ -136,6 +136,9 @@
           "default, with this value used to determine a lower bound.")      \
           range(1, SIZE_MAX)                                                \
                                                                             \
+  product(bool, G1TestEpochSyncInConcRefinement, false,                     \
+          "Test EpochSynchronizer in concurrent refinement.")               \
+                                                                            \
   product(intx, G1RSetUpdatingPauseTimePercent, 10,                         \
           "A target percentage of time that is allowed to be spend on "     \
           "processing remembered set update buffers during the collection " \

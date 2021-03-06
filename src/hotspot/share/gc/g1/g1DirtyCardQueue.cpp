@@ -30,6 +30,8 @@
 #include "gc/g1/g1ConcurrentRefineStats.hpp"
 #include "gc/g1/g1ConcurrentRefineThread.hpp"
 #include "gc/g1/g1DirtyCardQueue.hpp"
+#include "gc/g1/g1EpochSynchronizer.hpp"
+#include "gc/g1/g1EpochSynchronizerStats.hpp"
 #include "gc/g1/g1FreeIdSet.hpp"
 #include "gc/g1/g1RedirtyCardsQueue.hpp"
 #include "gc/g1/g1RemSet.hpp"
@@ -37,6 +39,7 @@
 #include "gc/g1/heapRegionRemSet.inline.hpp"
 #include "gc/shared/suspendibleThreadSet.hpp"
 #include "memory/iterator.hpp"
+#include "memory/resourceArea.inline.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/mutex.hpp"
 #include "runtime/mutexLocker.hpp"
@@ -49,6 +52,7 @@
 #include "utilities/nonblockingQueue.inline.hpp"
 #include "utilities/pair.hpp"
 #include "utilities/quickSort.hpp"
+#include "utilities/spinYield.hpp"
 #include "utilities/ticks.hpp"
 
 G1DirtyCardQueue::G1DirtyCardQueue(G1DirtyCardQueueSet* qset) :
@@ -70,6 +74,7 @@ G1DirtyCardQueueSet::G1DirtyCardQueueSet(BufferNode::Allocator* allocator) :
   _num_cards(0),
   _completed(),
   _paused(),
+  _deferred(),
   _free_ids(par_ids_start(), num_par_ids()),
   _process_cards_threshold(ProcessCardsThresholdNever),
   _max_cards(MaxCardsUnlimited),
@@ -288,27 +293,26 @@ void G1DirtyCardQueueSet::record_paused_buffer(BufferNode* node) {
   _paused.add(node);
 }
 
-void G1DirtyCardQueueSet::enqueue_paused_buffers_aux(const HeadTail& paused) {
-  if (paused._head != NULL) {
-    assert(paused._tail != NULL, "invariant");
-    // Cards from paused buffers are already recorded in the queue count.
-    _completed.append(*paused._head, *paused._tail);
+void G1DirtyCardQueueSet::enqueue_buffers_to_completed_aux(const HeadTail& list) {
+  if (list._head != NULL) {
+    assert(list._tail != NULL, "invariant");
+    // Cards from paused or deferred buffers are already recorded in the queue count.
+    _completed.append(*list._head, *list._tail);
   }
 }
 
 void G1DirtyCardQueueSet::enqueue_previous_paused_buffers() {
   assert_not_at_safepoint();
-  enqueue_paused_buffers_aux(_paused.take_previous());
+  enqueue_buffers_to_completed_aux(_paused.take_previous());
 }
 
-void G1DirtyCardQueueSet::enqueue_all_paused_buffers() {
+void G1DirtyCardQueueSet::enqueue_all_paused_and_deferred_buffers() {
   assert_at_safepoint();
-  enqueue_paused_buffers_aux(_paused.take_all());
+  enqueue_buffers_to_completed_aux(_paused.take_all());
+  enqueue_buffers_to_completed_aux(take_all_deferred_buffers());
 }
 
 void G1DirtyCardQueueSet::abandon_completed_buffers() {
-  enqueue_all_paused_buffers();
-  verify_num_cards();
   G1BufferNodeList list = take_all_completed_buffers();
   BufferNode* buffers_to_delete = list._head;
   while (buffers_to_delete != NULL) {
@@ -338,7 +342,7 @@ void G1DirtyCardQueueSet::merge_bufferlists(G1RedirtyCardsQueueSet* src) {
 }
 
 G1BufferNodeList G1DirtyCardQueueSet::take_all_completed_buffers() {
-  enqueue_all_paused_buffers();
+  enqueue_all_paused_and_deferred_buffers();
   verify_num_cards();
   Pair<BufferNode*, BufferNode*> pair = _completed.take_all();
   size_t num_cards = Atomic::load(&_num_cards);
@@ -346,11 +350,198 @@ G1BufferNodeList G1DirtyCardQueueSet::take_all_completed_buffers() {
   return G1BufferNodeList(pair.first, pair.second, num_cards);
 }
 
+void G1DirtyCardQueueSet::BufferAndEpoch::Deallocater::deallocate(BufferAndEpoch* b) {
+  Atomic::store(BufferAndEpoch::next_ptr(*b), (BufferAndEpoch*)NULL);
+  _pending_free.push(*b);
+  Atomic::inc(&_pending_free_count);
+  // The batch size to free the objects. Its value has very small impact.
+  // It is a tradeoff between space and time.
+  const size_t trigger_threshold = 10;
+  if (Atomic::load(&_pending_free_count) > trigger_threshold) {
+    // There is no ABA problem on the _pending_free Stack itself,
+    // as we don't do pop() on the Stack.
+    BufferAndEpoch* b = _pending_free.pop_all();
+
+    // Ensures all concurrent pops from the deferred queue are finished,
+    // avoiding ABA problem on the deferred queue due to potential
+    // reused space by malloc.
+    GlobalCounter::write_synchronize();
+
+    size_t count = 0;
+    while (b != NULL) {
+      ++count;
+      BufferAndEpoch* next = b->next();
+      delete b;
+      b = next;
+    }
+    if (count > 0) {
+      Atomic::sub(&_pending_free_count, count);
+    }
+  }
+}
+
+void G1DirtyCardQueueSet::BufferAndEpoch::Deallocater::deallocate_at_safepoint(BufferAndEpoch* b) {
+  assert_at_safepoint();
+  delete b;
+}
+
+void G1DirtyCardQueueSet::BufferAndEpoch::Deallocater::deallocate_all_pending() {
+  assert_at_safepoint();
+  _pending_free_count = 0;
+  BufferAndEpoch* b = _pending_free.pop_all();
+  while (b != NULL) {
+    BufferAndEpoch* next = b->next();
+    delete b;
+    b = next;
+  }
+}
+
+void G1DirtyCardQueueSet::enqueue_deferred_buffer(BufferNode* node, const G1EpochSynchronizer& syncer) {
+  assert_not_at_safepoint();
+  BufferAndEpoch* b = new BufferAndEpoch(node, syncer);
+  // Cards for deferred buffers are included in count, to contribute to
+  // notification checking, so that they will be refined later.
+  Atomic::add(&_num_cards, buffer_size() - node->index());
+  _deferred.push(*b);
+}
+
+static void redirty_unrefined_cards(CardTable::CardValue** buffer,
+                                    size_t start,
+                                    size_t buffer_size) {
+  for ( ; start < buffer_size; ++start) {
+    *buffer[start] = G1CardTable::dirty_card_val();
+  }
+}
+
+// Thread-safe attempt to remove and return the first buffer from
+// the _deferred queue. It is very similar to dequeue_completed_buffer().
+G1DirtyCardQueueSet::BufferAndEpoch* G1DirtyCardQueueSet::dequeue_deferred_buffer() {
+  using Status = LockFreeQueuePopStatus;
+  Thread* current_thread = Thread::current();
+  while (true) {
+    GlobalCounter::CriticalSection cs(current_thread);
+    Pair<Status, G1DirtyCardQueueSet::BufferAndEpoch*> pop_result = _deferred.try_pop();
+    switch (pop_result.first) {
+      case Status::success:
+        return pop_result.second;
+      case Status::operation_in_progress:
+        // Return NULL to prevent retrying for too long.
+        return NULL;
+      case Status::lost_race:
+        break;  // Try again.
+    }
+  }
+}
+
+bool G1DirtyCardQueueSet::get_and_synchronize_deferred_buffer(BufferNode** node_addr,
+                                                              G1EpochSynchronizerStats* stats) {
+  assert_not_at_safepoint();
+  BufferAndEpoch* b = dequeue_deferred_buffer();
+  if (b == NULL) {
+    return false;
+  }
+  Ticks start_time = Ticks::now();
+
+  BufferNode* const node = b->node();
+  G1EpochSynchronizer syncer = b->syncer();
+  const size_t node_start = node->index();
+  const size_t node_size = buffer_size();
+  Atomic::sub(&_num_cards, node_size - node_start);
+  *node_addr = node;
+  _deferred_deallocator.deallocate(b);
+
+  // Check and wait until the async epoch synchronization is complete.
+  // In most cases, the first attempt of check_synchronized_for_deferred()
+  // will succeed, as the deferred queue is processed with the lowest priority
+  // compared to completed and paused queues.
+  // TODO: In rare cases this could take several milliseconds. Perhaps we should
+  // add a timeout, redirty the buffer and enqueue it to the paused list?
+  bool yielded = false;
+  SpinYield spin;
+  // TODO: remove this counter and logging message below.
+  size_t attempts = 0;
+  while (!yielded && !syncer.check_synchronized()) {
+    ++attempts;
+    if (SuspendibleThreadSet::should_yield()) {
+      redirty_unrefined_cards(reinterpret_cast<CardTable::CardValue**>(BufferNode::make_buffer_from_node(node)),
+                              node_start,
+                              node_size);
+      G1EpochSynchronizer::dec_pending_sync();
+      yielded = true;
+    }
+    spin.wait();
+  }
+  stats->inc_deferred_sync_time(Ticks::now() - start_time);
+  if (attempts > 0) {
+    if (yielded) {
+      log_info(gc, refine, ptrqueue)("Yielded in dequeue_deferred after %.2fms",
+          (Ticks::now() - start_time).seconds() * MILLIUNITS);
+    } else {
+      log_info(gc, refine, ptrqueue)("Synced in dequeue_deferred after %.2fms",
+                (Ticks::now() - start_time).seconds() * MILLIUNITS);
+    }
+  }
+  return !yielded;
+}
+
+// Reset epoch for each deferred buffer.
+size_t G1DirtyCardQueueSet::reset_epoch_in_deferred_buffer() {
+  assert_at_safepoint();
+  assert(Thread::current()->is_VM_thread(), "invariant");
+  size_t count = 0;
+  BufferAndEpoch* b = _deferred.top();
+  while (b != NULL) {
+    b->syncer().reset();
+    ++count;
+    b = b->next();
+  }
+  return count;
+}
+
+G1DirtyCardQueueSet::HeadTail G1DirtyCardQueueSet::take_all_deferred_buffers() {
+  assert_at_safepoint(); // Must called during a collection pause.
+  _deferred_deallocator.deallocate_all_pending();
+
+  Pair<BufferAndEpoch*, BufferAndEpoch*> pair = _deferred.take_all();
+  BufferAndEpoch* p = pair.first;
+  if (p == NULL) {
+    DEBUG_ONLY(G1EpochSynchronizer::verify_before_collection_pause(0);)
+    return HeadTail(NULL, NULL);
+  }
+
+  // Iterate the queue to build a reversed queue of BufferNode, linked via BufferNode::_next.
+  // Re-dirty the BufferNodes and deallocate BufferAndEpochs in the meantime.
+  BufferNode* const head = p->node();
+  BufferNode* const tail = pair.second->node();
+  BufferNode* last = NULL;
+  size_t count = 0;
+  while (p != NULL) {
+    ++count;
+    BufferNode* node = p->node();
+    redirty_unrefined_cards(reinterpret_cast<CardTable::CardValue**>(BufferNode::make_buffer_from_node(node)),
+                            node->index(),
+                            buffer_size());
+    node->set_next(last);
+    last = node;
+
+    BufferAndEpoch* next_p = p->next();
+    _deferred_deallocator.deallocate_at_safepoint(p);
+    p = next_p;
+  }
+  assert(last == tail, "invariant");
+
+  log_debug(gc, refine, stats)("Epoch Synchronization: unrefined deferred buffers: " SIZE_FORMAT, count);
+  DEBUG_ONLY(G1EpochSynchronizer::verify_before_collection_pause(count);)
+  return HeadTail(tail, head);
+}
+
 class G1RefineBufferedCards : public StackObj {
+  typedef bool (G1RemSet::*CardFilter)(CardTable::CardValue** const card_ptr_addr);
   BufferNode* const _node;
   CardTable::CardValue** const _node_buffer;
   const size_t _node_buffer_size;
   const uint _worker_id;
+  G1DirtyCardQueueSet* _qset;
   G1ConcurrentRefineStats* _stats;
   G1RemSet* const _g1rs;
 
@@ -370,13 +561,13 @@ class G1RefineBufferedCards : public StackObj {
   }
 
   // Returns the index to the first clean card in the buffer.
-  size_t clean_cards() {
+  size_t filter_cards(CardFilter filter) {
     const size_t start = _node->index();
     assert(start <= _node_buffer_size, "invariant");
 
     // Two-fingered compaction algorithm similar to the filtering mechanism in
-    // SATBMarkQueue. The main difference is that clean_card_before_refine()
-    // could change the buffer element in-place.
+    // SATBMarkQueue. The main difference is that filter function could change
+    // the buffer element in-place (e.g. G1RemSet::clean_card_before_refine()).
     // We don't check for SuspendibleThreadSet::should_yield(), because
     // cleaning and redirtying the cards is fast.
     CardTable::CardValue** src = &_node_buffer[start];
@@ -384,10 +575,10 @@ class G1RefineBufferedCards : public StackObj {
     assert(src <= dst, "invariant");
     for ( ; src < dst; ++src) {
       // Search low to high for a card to keep.
-      if (_g1rs->clean_card_before_refine(src)) {
+      if ((_g1rs->*filter)(src)) {
         // Found keeper.  Search high to low for a card to discard.
         while (src < --dst) {
-          if (!_g1rs->clean_card_before_refine(dst)) {
+          if (!(_g1rs->*filter)(dst)) {
             *dst = *src;         // Replace discard with keeper.
             break;
           }
@@ -402,29 +593,26 @@ class G1RefineBufferedCards : public StackObj {
     assert(first_clean >= start && first_clean <= _node_buffer_size, "invariant");
     // Discarded cards are considered as refined.
     _stats->inc_refined_cards(first_clean - start);
-    _stats->inc_precleaned_cards(first_clean - start);
     return first_clean;
   }
 
-  bool refine_cleaned_cards(size_t start_index) {
-    bool result = true;
+  G1BufferNodeRefineStatus refine_cleaned_cards(size_t start_index) {
+    bool yielded = false;
     size_t i = start_index;
     for ( ; i < _node_buffer_size; ++i) {
       if (SuspendibleThreadSet::should_yield()) {
-        redirty_unrefined_cards(i);
-        result = false;
+        redirty_unrefined_cards(_node_buffer, i, _node_buffer_size);
+        yielded = true;
         break;
       }
       _g1rs->refine_card_concurrently(_node_buffer[i], _worker_id);
     }
     _node->set_index(i);
     _stats->inc_refined_cards(i - start_index);
-    return result;
-  }
-
-  void redirty_unrefined_cards(size_t start) {
-    for ( ; start < _node_buffer_size; ++start) {
-      *_node_buffer[start] = G1CardTable::dirty_card_val();
+    if (yielded) {
+      return G1BufferNodeRefineStatus::PAUSED;
+    } else {
+      return G1BufferNodeRefineStatus::FULLY_PROCESSED;
     }
   }
 
@@ -432,59 +620,138 @@ public:
   G1RefineBufferedCards(BufferNode* node,
                         size_t node_buffer_size,
                         uint worker_id,
+                        G1DirtyCardQueueSet* qset,
                         G1ConcurrentRefineStats* stats) :
     _node(node),
     _node_buffer(reinterpret_cast<CardTable::CardValue**>(BufferNode::make_buffer_from_node(node))),
     _node_buffer_size(node_buffer_size),
     _worker_id(worker_id),
+    _qset(qset),
     _stats(stats),
     _g1rs(G1CollectedHeap::heap()->rem_set()) {}
 
-  bool refine() {
-    size_t first_clean_index = clean_cards();
+  G1BufferNodeRefineStatus refine() {
+    size_t first_clean_index = filter_cards(&G1RemSet::clean_card_before_refine);
+    _stats->inc_precleaned_cards(first_clean_index - _node->index());
     if (first_clean_index == _node_buffer_size) {
       _node->set_index(first_clean_index);
-      return true;
+      return G1BufferNodeRefineStatus::FULLY_PROCESSED;
     }
-    // This fence serves two purposes. First, the cards must be cleaned
-    // before processing the contents. Second, we can't proceed with
-    // processing a region until after the read of the region's top in
-    // collect_and_clean_cards(), for synchronization with possibly concurrent
-    // humongous object allocation (see comment at the StoreStore fence before
-    // setting the regions' tops in humongous allocation path).
-    // It's okay that reading region's top and reading region's type were racy
-    // wrto each other. We need both set, in any order, to proceed.
+    if (G1TestEpochSyncInConcRefinement) {
+      ResourceMark rm; // For retrieving thread names in logging.
+      G1EpochSynchronizer syncer(true); // Also provides full fence;
+
+      // Spend some time doing useful work before checking synchronization status.
+      sort_cards(first_clean_index);
+
+      G1EpochSynchronizerStats* epoch_stats = _stats->epoch_stats();
+      Ticks start_time = Ticks::now();
+      if (!syncer.synchronize()) {
+        assert(first_clean_index < _node_buffer_size, "Buffer fully consumed.");
+        // Record the clean index, as the buffer will be enqueued and refined later.
+        _node->set_index(first_clean_index);
+        // Enqueue the buffer together with the G1EpochSynchronizer, and defer
+        // refinement. Note that the buffer could be deferred across a safepoint
+        // that is not a young/mixed/full collection pause.
+        _qset->enqueue_deferred_buffer(_node, syncer);
+        epoch_stats->inc_deferred_sync_time(Ticks::now() - start_time);
+        epoch_stats->inc_deferred_syncs();
+        return G1BufferNodeRefineStatus::DEFERRED_OR_NOOP;
+      }
+      epoch_stats->inc_fast_sync_time(Ticks::now() - start_time);
+      epoch_stats->inc_fast_syncs();
+      return refine_cleaned_cards(first_clean_index);
+    } else {
+      // This fence serves two purposes. First, the cards must be cleaned
+      // before processing the contents. Second, we can't proceed with
+      // processing a region until after the read of the region's top in
+      // clean_cards(), for synchronization with possibly concurrent
+      // humongous object allocation (see comment at the StoreStore fence before
+      // setting the regions' tops in humongous allocation path).
+      // It's okay that reading region's top and reading region's type were racy
+      // wrto each other. We need both set, in any order, to proceed.
+      OrderAccess::fence();
+      sort_cards(first_clean_index);
+      return refine_cleaned_cards(first_clean_index);
+    }
+  }
+
+  // For refining a buffer after waiting for an async handshake to finish.
+  G1BufferNodeRefineStatus refine_without_cleaning() {
+    assert(G1TestEpochSyncInConcRefinement, "invariant");
+    // After an async epoch synchronization, we could have passed a safepoint
+    // since cleaning the cards. The safepoint could be a remark pause that freed some
+    // regions and invalidated cards. The current thread could also be a different
+    // thread that initially cleaned the buffer. We need to re-check all previously
+    // cleaned cards, and only refine cards that are still clean and valid.
+    size_t first_clean_index = filter_cards(&G1RemSet::card_is_clean_before_refine);
+    if (first_clean_index == _node_buffer_size) {
+      _node->set_index(first_clean_index);
+      return G1BufferNodeRefineStatus::FULLY_PROCESSED;
+    }
+    // We still need the fence due to humongous allocations.
     OrderAccess::fence();
     sort_cards(first_clean_index);
     return refine_cleaned_cards(first_clean_index);
   }
 };
 
-bool G1DirtyCardQueueSet::refine_buffer(BufferNode* node,
-                                        uint worker_id,
-                                        G1ConcurrentRefineStats* stats) {
+G1BufferNodeRefineStatus G1DirtyCardQueueSet::refine_buffer(
+    BufferNode** node_addr, uint worker_id, G1ConcurrentRefineStats* stats) {
+  BufferNode* node = *node_addr;
+  bool is_deferred_node = false;
   Ticks start_time = Ticks::now();
+  if (node == NULL) {
+    // We didn't get a buffer from the _completed and _paused queues.
+    // Try popping a buffer from deferred queue.
+    // This effectively delays refining buffers from the deferred queue,
+    // as they need to wait for async epoch synchronization to finish.
+    bool result = get_and_synchronize_deferred_buffer(node_addr, stats->epoch_stats());
+    node = *node_addr;
+    if (!result) {
+      stats->inc_refinement_time(Ticks::now() - start_time);
+      if (node == NULL) {
+        // Nothing to do;
+        return G1BufferNodeRefineStatus::DEFERRED_OR_NOOP;
+      } else {
+        // Need to enqueue the buffer to paused queue.
+        return G1BufferNodeRefineStatus::PAUSED;
+      }
+    }
+    is_deferred_node = true;
+  }
   G1RefineBufferedCards buffered_cards(node,
                                        buffer_size(),
                                        worker_id,
+                                       this,
                                        stats);
-  bool result = buffered_cards.refine();
+  G1BufferNodeRefineStatus status;
+  if (is_deferred_node) {
+    status = buffered_cards.refine_without_cleaning();
+  } else {
+    status = buffered_cards.refine();
+  }
   stats->inc_refinement_time(Ticks::now() - start_time);
-  return result;
+  return status;
 }
 
 void G1DirtyCardQueueSet::handle_refined_buffer(BufferNode* node,
-                                                bool fully_processed) {
-  if (fully_processed) {
+                                                G1BufferNodeRefineStatus status) {
+  if (status == G1BufferNodeRefineStatus::FULLY_PROCESSED) {
     assert(node->index() == buffer_size(),
            "Buffer not fully consumed: index: " SIZE_FORMAT ", size: " SIZE_FORMAT,
            node->index(), buffer_size());
     deallocate_buffer(node);
-  } else {
+  } else if (status == G1BufferNodeRefineStatus::PAUSED) {
     assert(node->index() < buffer_size(), "Buffer fully consumed.");
     // Buffer incompletely processed because there is a pending safepoint.
-    // Record partially processed buffer, to be finished later.
+    // Record partially processed buffer, to be re-processed later.
     record_paused_buffer(node);
+  } else {
+    assert(status == G1BufferNodeRefineStatus::DEFERRED_OR_NOOP, "invariant");
+    // Nothing to do or check.
+    // For enqueuing, the node could have been popped from the deferred queue by another thread.
+    // For dequeuing, the node could be NULL.
   }
 }
 
@@ -503,16 +770,19 @@ void G1DirtyCardQueueSet::handle_completed_buffer(BufferNode* new_node,
   }
 
   BufferNode* node = get_completed_buffer();
-  if (node == NULL) return;     // Didn't get a buffer to process.
+  if (node == NULL && _deferred.top() == NULL) {
+    // Didn't get a buffer to process.
+    return;
+  }
 
   // Refine cards in buffer.
 
   uint worker_id = _free_ids.claim_par_id(); // temporarily claim an id
-  bool fully_processed = refine_buffer(node, worker_id, stats);
+  G1BufferNodeRefineStatus status = refine_buffer(&node, worker_id, stats);
   _free_ids.release_par_id(worker_id); // release the id
 
   // Deal with buffer after releasing id, to let another thread use id.
-  handle_refined_buffer(node, fully_processed);
+  handle_refined_buffer(node, status);
 }
 
 bool G1DirtyCardQueueSet::refine_completed_buffer_concurrently(uint worker_id,
@@ -522,10 +792,13 @@ bool G1DirtyCardQueueSet::refine_completed_buffer_concurrently(uint worker_id,
   if (Atomic::load(&_num_cards) <= stop_at) return false;
 
   BufferNode* node = get_completed_buffer();
-  if (node == NULL) return false; // Didn't get a buffer to process.
+  if (node == NULL && _deferred.top() == NULL) {
+    // Didn't get a buffer to process.
+    return false;
+  }
 
-  bool fully_processed = refine_buffer(node, worker_id, stats);
-  handle_refined_buffer(node, fully_processed);
+  G1BufferNodeRefineStatus status = refine_buffer(&node, worker_id, stats);
+  handle_refined_buffer(node, status);
   return true;
 }
 
@@ -572,7 +845,7 @@ void G1DirtyCardQueueSet::concatenate_logs() {
   Threads::threads_do(&closure);
 
   G1BarrierSet::shared_dirty_card_queue().flush();
-  enqueue_all_paused_buffers();
+  enqueue_all_paused_and_deferred_buffers();
   verify_num_cards();
   set_max_cards(old_limit);
 }

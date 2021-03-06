@@ -41,6 +41,9 @@
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/preserveException.hpp"
+#if INCLUDE_G1GC
+#include "gc/g1/g1EpochUpdater.inline.hpp"
+#endif  // INCLUDE_G1GC
 
 // Wrapper for all entry points to the virtual machine.
 
@@ -150,8 +153,9 @@ class ThreadInVMForHandshake : public ThreadStateTransition {
   ~ThreadInVMForHandshake() {
     assert(_thread->thread_state() == _thread_in_vm, "should only call when leaving VM after handshake");
     _thread->set_thread_state(_original_state);
-  }
 
+    G1GC_ONLY(if (UseG1GC) { G1EpochUpdater::update_epoch_self(_thread); })
+  }
 };
 
 class ThreadInVMfromJava : public ThreadStateTransition {
@@ -168,6 +172,8 @@ class ThreadInVMfromJava : public ThreadStateTransition {
     // We prevent asynchronous exceptions from being installed on return to Java in situations
     // where we can't tolerate them. See bugs: 4324348, 4854693, 4998314, 5040492, 5050705.
     if (_thread->has_special_runtime_exit_condition()) _thread->handle_special_runtime_exit_condition(_check_asyncs);
+
+    G1GC_ONLY(if (UseG1GC) { G1EpochUpdater::update_epoch_self(_thread); })
   }
 };
 

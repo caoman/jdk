@@ -26,6 +26,7 @@
 #include "gc/g1/g1BarrierSet.inline.hpp"
 #include "gc/g1/g1BarrierSetAssembler.hpp"
 #include "gc/g1/g1CardTable.inline.hpp"
+#include "gc/g1/g1EpochUpdater.inline.hpp"
 #include "gc/g1/g1CollectedHeap.inline.hpp"
 #include "gc/g1/g1SATBMarkQueueSet.hpp"
 #include "gc/g1/g1ThreadLocalData.hpp"
@@ -154,6 +155,9 @@ void G1BarrierSet::on_thread_attach(Thread* thread) {
   // set the active field of the SATB queue to true.  That involves
   // copying the global is_active value to this thread's queue.
   queue.set_active(_satb_mark_queue_set.is_active());
+  if (thread->is_Java_thread()) {
+    G1EpochUpdater::update_epoch_self_or_other(thread);
+  }
 }
 
 void G1BarrierSet::on_thread_detach(Thread* thread) {

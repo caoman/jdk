@@ -34,10 +34,15 @@
 
 class G1ThreadLocalData {
 private:
+  // Support for Asymmetric Dekker Synchronization with concurrent refinement
+  // threads.
+  volatile uintx _epoch;
+
   SATBMarkQueue _satb_mark_queue;
   G1DirtyCardQueue _dirty_card_queue;
 
   G1ThreadLocalData() :
+      _epoch(0),
       _satb_mark_queue(&G1BarrierSet::satb_mark_queue_set()),
       _dirty_card_queue(&G1BarrierSet::dirty_card_queue_set()) {}
 
@@ -61,6 +66,10 @@ public:
 
   static void destroy(Thread* thread) {
     data(thread)->~G1ThreadLocalData();
+  }
+
+  static volatile uintx& epoch(Thread* thread) {
+    return data(thread)->_epoch;
   }
 
   static SATBMarkQueue& satb_mark_queue(Thread* thread) {

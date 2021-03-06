@@ -32,6 +32,9 @@
 #include "runtime/stackWatermarkSet.hpp"
 #include "services/memTracker.hpp"
 #include "utilities/globalDefinitions.hpp"
+#if INCLUDE_G1GC
+#include "gc/g1/g1EpochUpdater.inline.hpp"
+#endif  // INCLUDE_G1GC
 
 uintptr_t SafepointMechanism::_poll_word_armed_value;
 uintptr_t SafepointMechanism::_poll_word_disarmed_value;
@@ -125,6 +128,7 @@ void SafepointMechanism::update_poll_values(JavaThread* thread) {
     thread->poll_data()->set_polling_page(poll_page);
     thread->poll_data()->set_polling_word(poll_word);
     OrderAccess::fence();
+    G1GC_ONLY(if (UseG1GC) { G1EpochUpdater::update_epoch_self(thread); })
     if (!armed && (global_poll() || thread->handshake_state()->has_operation())) {
       // We disarmed an old safepoint, but a new one is synchronizing.
       // We need to arm the poll for the subsequent safepoint poll.

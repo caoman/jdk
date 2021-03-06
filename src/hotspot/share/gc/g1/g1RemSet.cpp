@@ -1646,6 +1646,37 @@ bool G1RemSet::clean_card_before_refine(CardValue** const card_ptr_addr) {
   return true;
 }
 
+bool G1RemSet::card_is_clean_before_refine(CardValue** const card_ptr_addr) {
+  // This method is similar to clean_card_before_refine() above, except
+  // it checks for clean card and doesn't write to the card.
+  assert(!_g1h->is_gc_active(), "Only call concurrently");
+
+  CardValue* card_ptr = *card_ptr_addr;
+  HeapWord* start = _ct->addr_for(card_ptr);
+  HeapRegion* r = _g1h->heap_region_containing_or_null(start);
+
+  // If this is a (stale) card into an uncommitted region, exit.
+  if (r == NULL) {
+    return false;
+  }
+
+  check_card_ptr(card_ptr, _ct);
+
+  // Card is no longer clean. It must have been recorded
+  // in another buffer, so we don't need to refine it.
+  if (*card_ptr != G1CardTable::clean_card_val()) {
+    return false;
+  }
+  if (!r->is_old_or_humongous_or_archive()) {
+    return false;
+  }
+  HeapWord* scan_limit = r->top();
+  if (scan_limit <= start) {
+    return false;
+  }
+  return true;
+}
+
 void G1RemSet::refine_card_concurrently(CardValue* const card_ptr,
                                         const uint worker_id) {
   assert(!_g1h->is_gc_active(), "Only call concurrently");
@@ -1658,9 +1689,9 @@ void G1RemSet::refine_card_concurrently(CardValue* const card_ptr,
   // This reload of the top is safe even though it happens after the full
   // fence, because top is stable for old, archive and unfiltered humongous
   // regions, so it must return the same value as the previous load when
-  // cleaning the card. Also cleaning the card and refinement of the card
-  // cannot span across safepoint, so we don't need to worry about top being
-  // changed during safepoint.
+  // cleaning the card. Also the previous load of top and refinement of
+  // the card cannot span across safepoint, so we don't need to worry about
+  // top being changed during safepoint.
   HeapWord* scan_limit = r->top();
   assert(scan_limit > start, "sanity");
 
