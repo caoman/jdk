@@ -223,6 +223,7 @@ bool G1ConcurrentMarkThread::subphase_mark_from_roots() {
   ConcurrentGCBreakpoints::at("AFTER MARKING STARTED");
   G1ConcPhaseTimer p(_cm, "Concurrent Mark From Roots");
   _cm->mark_from_roots();
+  _cm->update_concurrent_mark_threads_cpu_time();
   return _cm->has_aborted();
 }
 
@@ -339,4 +340,5 @@ void G1ConcurrentMarkThread::concurrent_cycle_end(bool mark_cycle_completed) {
 
   _cm->concurrent_cycle_end();
   ConcurrentGCBreakpoints::notify_active_to_idle();
+  _cm->update_concurrent_mark_threads_cpu_time();
 }

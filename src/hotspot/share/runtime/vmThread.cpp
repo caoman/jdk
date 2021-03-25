@@ -92,6 +92,7 @@ VMThread*         VMThread::_vm_thread          = NULL;
 VM_Operation*     VMThread::_cur_vm_operation   = NULL;
 VM_Operation*     VMThread::_next_vm_operation  = &cleanup_op; // Prevent any thread from setting an operation until VM thread is ready.
 PerfCounter*      VMThread::_perf_accumulated_vm_operation_time = NULL;
+PerfVariable*     VMThread::_perf_vm_thread_cpu_time = NULL;
 VMOperationTimeoutTask* VMThread::_timeout_task = NULL;
 
 
@@ -123,6 +124,9 @@ void VMThread::create() {
     _perf_accumulated_vm_operation_time =
                  PerfDataManager::create_counter(SUN_THREADS, "vmOperationTime",
                                                  PerfData::U_Ticks, CHECK);
+    _perf_vm_thread_cpu_time =
+                 PerfDataManager::create_variable(NULL_NS, "vm_thread_time",
+                                                  PerfData::U_Ticks, CHECK);
   }
 }
 
@@ -274,6 +278,14 @@ void VMThread::evaluate_operation(VM_Operation* op) {
     HOTSPOT_VMOPS_END(
                      (char *) op->name(), strlen(op->name()),
                      op->evaluate_at_safepoint() ? 0 : 1);
+  }
+
+  if (UsePerfData && os::is_thread_cpu_time_supported()) {
+    assert(Thread::current() == static_cast<Thread*>(this),
+           "Must be called from VM thread");
+    // Update vm_thread_cpu_time after each VM operation.
+    ThreadTotalCPUTimeClosure tttc(perf_vm_thread_cpu_time());
+    tttc.do_thread(this);
   }
 
 }

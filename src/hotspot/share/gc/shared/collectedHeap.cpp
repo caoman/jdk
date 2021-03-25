@@ -258,6 +258,10 @@ CollectedHeap::CollectedHeap() :
     _perf_gc_lastcause =
                 PerfDataManager::create_string_variable(SUN_GC, "lastCause",
                              80, GCCause::to_string(_gc_lastcause), CHECK);
+
+    _perf_parallel_gc_threads_cpu_time =
+                PerfDataManager::create_variable(NULL_NS, "par_gc_thread_time",
+                                                 PerfData::U_Ticks, CHECK);
   }
 
   // Create the ring log
@@ -652,3 +656,17 @@ void CollectedHeap::update_capacity_and_used_at_gc() {
   _capacity_at_last_gc = capacity();
   _used_at_last_gc     = used();
 }
+
+ThreadTotalCPUTimeClosure::~ThreadTotalCPUTimeClosure() {
+  _counter->set_value(_total);
+}
+
+void ThreadTotalCPUTimeClosure::do_thread(Thread* thread) {
+  // The default code path (fast_thread_cpu_time()) asserts that
+  // pthread_getcpuclockid() and clock_gettime() must return 0. Thus caller
+  // must ensure the thread exists and has not terminated.
+  assert(os::is_thread_cpu_time_supported(), "os must support cpu time");
+  jlong cpu_time = os::thread_cpu_time(thread);
+  _total += cpu_time;
+}
+

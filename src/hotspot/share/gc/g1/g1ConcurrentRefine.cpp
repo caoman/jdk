@@ -27,11 +27,13 @@
 #include "gc/g1/g1ConcurrentRefine.hpp"
 #include "gc/g1/g1ConcurrentRefineThread.hpp"
 #include "gc/g1/g1DirtyCardQueue.hpp"
+#include "gc/shared/collectedHeap.hpp"
 #include "logging/log.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/iterator.hpp"
 #include "runtime/globals_extension.hpp"
 #include "runtime/java.hpp"
+#include "runtime/perfData.hpp"
 #include "runtime/thread.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/formatBuffer.hpp"
@@ -92,6 +94,13 @@ jint G1ConcurrentRefineThreadControl::initialize(G1ConcurrentRefine* cr, uint nu
     G1BarrierSet::dirty_card_queue_set().set_primary_refinement_thread(_threads[0]);
   }
 
+  if (UsePerfData) {
+    EXCEPTION_MARK;
+    _g1_concurrent_refine_threads_cpu_time =
+        PerfDataManager::create_variable(NULL_NS, "g1_conc_refine_thread_time",
+                                         PerfData::U_Ticks, CHECK_JNI_ERR);
+  }
+
   return JNI_OK;
 }
 
@@ -130,6 +139,22 @@ void G1ConcurrentRefineThreadControl::stop() {
       _threads[i]->stop();
     }
   }
+}
+
+void G1ConcurrentRefineThreadControl::update_threads_cpu_time() {
+  // The primary thread (_threads[0]) updates the counter for all worker
+  // threads, because:
+  // the primary thread is always waken up first from being blocked on a monitor
+  // when there is refinement work to do (see comment in
+  // G1ConcurrentRefineThread's constructor);
+  // the primary thread is started last and stopped first, so it will not risk
+  // reading CPU time of a terminated worker thread.
+  assert(Thread::current() == _threads[0],
+         "Must be called from G1ConcurrentRefineThreadControl::_threads[0] to "
+         "avoid races");
+  assert(UsePerfData, "Must be enabled");
+  ThreadTotalCPUTimeClosure tttc(_g1_concurrent_refine_threads_cpu_time);
+  worker_threads_do(&tttc);
 }
 
 // Arbitrary but large limits, to simplify some of the zone calculations.
@@ -458,4 +483,8 @@ bool G1ConcurrentRefine::do_refinement_step(uint worker_id,
   return dcqs.refine_completed_buffer_concurrently(worker_id + worker_id_offset(),
                                                    deactivation_threshold(worker_id),
                                                    stats);
+}
+
+void G1ConcurrentRefine::update_concurrent_refine_threads_cpu_time() {
+  _thread_control.update_threads_cpu_time();
 }

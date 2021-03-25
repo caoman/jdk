@@ -2582,6 +2582,7 @@ void G1CollectedHeap::gc_epilogue(bool full) {
   // We have just completed a GC. Update the soft reference
   // policy with the new heap occupancy
   Universe::heap()->update_capacity_and_used_at_gc();
+  update_parallel_gc_threads_cpu_time();
 
   // Print NUMA statistics.
   _numa->print_statistics();
@@ -2753,6 +2754,22 @@ public:
     return false;
   }
 };
+
+void G1CollectedHeap::update_parallel_gc_threads_cpu_time() {
+  assert(Thread::current()->is_VM_thread(),
+         "Must be called from VM thread to avoid races");
+  if (!UsePerfData || !os::is_thread_cpu_time_supported()) {
+    return;
+  }
+  WorkGang* work_gang = workers();
+  if (work_gang != NULL) {
+    ThreadTotalCPUTimeClosure tttc(_perf_parallel_gc_threads_cpu_time);
+    // Currently parallel worker threads never terminate (JDK-8081682), so it is
+    // safe for VMThread to read their CPU times. If upstream fixes JDK-8087340
+    // so they terminate, we should rethink if it is still safe.
+    work_gang->threads_do(&tttc);
+  }
+}
 
 void G1CollectedHeap::start_new_collection_set() {
   double start = os::elapsedTime();

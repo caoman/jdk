@@ -454,6 +454,13 @@ G1ConcurrentMark::G1ConcurrentMark(G1CollectedHeap* g1h,
   }
 
   reset_at_marking_complete();
+
+  if (UsePerfData) {
+    EXCEPTION_MARK;
+    _g1_concurrent_mark_threads_cpu_time =
+        PerfDataManager::create_variable(NULL_NS, "g1_conc_mark_thread_time",
+                                         PerfData::U_Ticks, CHECK);
+  }
 }
 
 void G1ConcurrentMark::reset() {
@@ -2054,6 +2061,17 @@ void G1ConcurrentMark::print_on_error(outputStream* st) const {
                p2i(_prev_mark_bitmap), p2i(_next_mark_bitmap));
   _prev_mark_bitmap->print_on_error(st, " Prev Bits: ");
   _next_mark_bitmap->print_on_error(st, " Next Bits: ");
+}
+
+void G1ConcurrentMark::update_concurrent_mark_threads_cpu_time() {
+  assert(Thread::current() == static_cast<Thread*>(cm_thread()),
+         "Must be called from _cmThread to avoid races");
+  if (!UsePerfData || !os::is_thread_cpu_time_supported()) {
+    return;
+  }
+  ThreadTotalCPUTimeClosure tttc(_g1_concurrent_mark_threads_cpu_time);
+  tttc.do_thread(cm_thread());
+  threads_do(&tttc);
 }
 
 static ReferenceProcessor* get_cm_oop_closure_ref_processor(G1CollectedHeap* g1h) {

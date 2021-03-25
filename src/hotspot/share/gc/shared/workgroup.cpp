@@ -225,6 +225,8 @@ GangWorker::GangWorker(WorkGang* gang, uint id) {
 void GangWorker::run() {
   initialize();
   loop();
+  // Precondition for Google-local feature jvm-threads-cpu-hsperfdata.
+  ShouldNotReachHere();
 }
 
 void GangWorker::initialize() {

@@ -29,6 +29,7 @@
 #include "gc/shared/gcWhen.hpp"
 #include "gc/shared/verifyOption.hpp"
 #include "memory/allocation.hpp"
+#include "memory/iterator.hpp"
 #include "memory/metaspace.hpp"
 #include "memory/universe.hpp"
 #include "runtime/handles.hpp"
@@ -116,6 +117,10 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   GCCause::Cause _gc_lastcause;
   PerfStringVariable* _perf_gc_cause;
   PerfStringVariable* _perf_gc_lastcause;
+
+  // Perf counters for CPU time of parallel GC threads. Defined here in order to
+  // be reused for all collectors.
+  PerfVariable* _perf_parallel_gc_threads_cpu_time;
 
   // Constructor
   CollectedHeap();
@@ -515,6 +520,21 @@ class GCCauseSetter : StackObj {
   ~GCCauseSetter() {
     _heap->set_gc_cause(_previous_cause);
   }
+};
+
+// Class to compute the total CPU time for a set of threads, then update an
+// hsperfdata counter.
+
+class ThreadTotalCPUTimeClosure: public ThreadClosure {
+  jlong _total;
+  PerfVariable* _counter;
+
+public:
+  ThreadTotalCPUTimeClosure(PerfVariable* counter) :
+      _total(0), _counter(counter) {}
+  ~ThreadTotalCPUTimeClosure();
+
+  virtual void do_thread(Thread* thread);
 };
 
 #endif // SHARE_GC_SHARED_COLLECTEDHEAP_HPP

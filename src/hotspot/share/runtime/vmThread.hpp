@@ -65,6 +65,7 @@ class VMThread: public NamedThread {
   static bool _terminated;
   static Monitor * _terminate_lock;
   static PerfCounter* _perf_accumulated_vm_operation_time;
+  static PerfVariable* _perf_vm_thread_cpu_time;
 
   static VMOperationTimeoutTask* _timeout_task;
 
@@ -119,6 +120,9 @@ class VMThread: public NamedThread {
   // Performance measurement
   static PerfCounter* perf_accumulated_vm_operation_time() {
     return _perf_accumulated_vm_operation_time;
+  }
+  static PerfVariable* perf_vm_thread_cpu_time() {
+    return _perf_vm_thread_cpu_time;
   }
 
   // Entry for starting vm thread

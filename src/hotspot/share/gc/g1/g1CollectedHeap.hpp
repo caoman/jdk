@@ -391,6 +391,8 @@ private:
   // must be at least of length MaxYoungGCNameLength.
   void set_young_gc_name(char* young_gc_name);
 
+  void update_parallel_gc_threads_cpu_time();
+
   // The young region list.
   G1EdenRegions _eden;
   G1SurvivorRegions _survivor;
