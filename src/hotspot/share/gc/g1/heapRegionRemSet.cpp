@@ -36,7 +36,6 @@
 #include "runtime/globals_extension.hpp"
 #include "utilities/bitMap.inline.hpp"
 #include "utilities/debug.hpp"
-#include "utilities/formatBuffer.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/growableArray.hpp"
 #include "utilities/powerOfTwo.hpp"
@@ -384,7 +383,7 @@ HeapRegionRemSet::HeapRegionRemSet(G1BlockOffsetTable* bot,
                                    HeapRegion* hr)
   : _bot(bot),
     _code_roots(),
-    _m(Mutex::leaf, FormatBuffer<128>("HeapRegionRemSet lock #%u", hr->hrm_index()), true, Mutex::_safepoint_check_never),
+    _m(Mutex::leaf, "HeapRegionRemSet lock", true, Mutex::_safepoint_check_never),
     _other_regions(&_m),
     _hr(hr),
     _state(Untracked)
