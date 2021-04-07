@@ -309,13 +309,8 @@ void G1BarrierSetAssembler::g1_write_barrier_post(MacroAssembler* masm, Decorato
   __ z_algr(Rcard_addr, Rbase);                                      // Explicit calculation needed for cli.
   Rbase = noreg; // end of lifetime
 
-  // Filter young.
-  __ z_cli(0, Rcard_addr, G1CardTable::g1_young_card_val());
-  __ z_bre(filtered);
-
   // Check the card value. If dirty, we're done.
   // This also avoids false sharing of the (already dirty) card.
-  __ z_sync(); // Required to support concurrent cleaning.
   __ z_cli(0, Rcard_addr, G1CardTable::dirty_card_val()); // Reload after membar.
   __ z_bre(filtered);
 
@@ -552,11 +547,6 @@ void G1BarrierSetAssembler::generate_c1_post_barrier_runtime_stub(StubAssembler*
   addr_oop = noreg; // dead now
   __ load_const_optimized(cardtable, rs); // cardtable := <card table base>
   __ z_agr(addr_card, cardtable); // addr_card := addr_oop>>card_shift + cardtable
-
-  __ z_cli(0, addr_card, (int)G1CardTable::g1_young_card_val());
-  __ z_bre(young_card);
-
-  __ z_sync(); // Required to support concurrent cleaning.
 
   __ z_cli(0, addr_card, (int)CardTable::dirty_card_val());
   __ z_brne(not_already_dirty);

@@ -32,14 +32,8 @@ void G1CardTable::g1_mark_as_young(const MemRegion& mr) {
   CardValue *const first = byte_for(mr.start());
   CardValue *const last = byte_after(mr.last());
 
-  memset_with_concurrent_readers(first, g1_young_gen, last - first);
+  memset_with_concurrent_readers(first, dirty_card, last - first);
 }
-
-#ifndef PRODUCT
-void G1CardTable::verify_g1_young_region(MemRegion mr) {
-  verify_region(mr, g1_young_gen,  true);
-}
-#endif
 
 void G1CardTableChangedListener::on_commit(uint start_idx, size_t num_regions, bool zero_filled) {
   // Default value for a clean card on the card table is -1. So we cannot take advantage of the zero_filled parameter.
@@ -73,6 +67,5 @@ void G1CardTable::initialize(G1RegionToSpaceMapper* mapper) {
 }
 
 bool G1CardTable::is_in_young(oop obj) const {
-  volatile CardValue* p = byte_for(obj);
-  return *p == G1CardTable::g1_young_card_val();
+  return G1CollectedHeap::heap()->heap_region_containing(obj)->is_young();
 }

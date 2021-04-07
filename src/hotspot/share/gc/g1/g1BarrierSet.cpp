@@ -94,8 +94,6 @@ void G1BarrierSet::write_ref_array_pre(narrowOop* dst, size_t count, bool dest_u
 }
 
 void G1BarrierSet::write_ref_field_post_slow(volatile CardValue* byte) {
-  // In the slow path, we know a card is not young
-  assert(*byte != G1CardTable::g1_young_card_val(), "slow path invoked without filtering");
   OrderAccess::storeload();
   if (*byte != G1CardTable::dirty_card_val()) {
     *byte = G1CardTable::dirty_card_val();
@@ -111,19 +109,18 @@ void G1BarrierSet::invalidate(MemRegion mr) {
   }
   volatile CardValue* byte = _card_table->byte_for(mr.start());
   CardValue* last_byte = _card_table->byte_for(mr.last());
-  // skip initial young cards
-  for (; byte <= last_byte && *byte == G1CardTable::g1_young_card_val(); byte++);
+  OrderAccess::storeload();
+  // skip initial dirty cards
+  for (; byte <= last_byte && *byte == G1CardTable::dirty_card_val(); byte++);
 
   if (byte <= last_byte) {
-    OrderAccess::storeload();
     // Enqueue if necessary.
     Thread* thr = Thread::current();
     G1DirtyCardQueueSet& qset = G1BarrierSet::dirty_card_queue_set();
     G1DirtyCardQueue& queue = G1ThreadLocalData::dirty_card_queue(thr);
     for (; byte <= last_byte; byte++) {
       CardValue bv = *byte;
-      if ((bv != G1CardTable::g1_young_card_val()) &&
-          (bv != G1CardTable::dirty_card_val())) {
+      if (bv != G1CardTable::dirty_card_val()) {
         *byte = G1CardTable::dirty_card_val();
         qset.enqueue(queue, byte);
       }

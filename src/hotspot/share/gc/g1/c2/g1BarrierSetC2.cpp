@@ -416,7 +416,6 @@ void G1BarrierSetC2::post_barrier(GraphKit* kit,
   Node* no_base = __ top();
   float likely = PROB_LIKELY_MAG(3);
   float unlikely = PROB_UNLIKELY_MAG(3);
-  Node* young_card = __ ConI((jint)G1CardTable::g1_young_card_val());
   Node* dirty_card = __ ConI((jint)G1CardTable::dirty_card_val());
   Node* zeroX = __ ConX(0);
 
@@ -465,18 +464,12 @@ void G1BarrierSetC2::post_barrier(GraphKit* kit,
 
         // Ok must mark the card if not already dirty
 
-        // load the original value of the card
+        // load the value of the card
         Node* card_val = __ load(__ ctrl(), card_adr, TypeInt::INT, T_BYTE, Compile::AliasIdxRaw);
-
-        __ if_then(card_val, BoolTest::ne, young_card, unlikely); {
-          kit->sync_kit(ideal);
-          kit->insert_mem_bar(Op_MemBarVolatile, oop_store);
-          __ sync_kit(kit);
-
-          Node* card_val_reload = __ load(__ ctrl(), card_adr, TypeInt::INT, T_BYTE, Compile::AliasIdxRaw);
-          __ if_then(card_val_reload, BoolTest::ne, dirty_card); {
-            g1_mark_card(kit, ideal, card_adr, oop_store, alias_idx, index, index_adr, buffer, tf);
-          } __ end_if();
+        // The card is likely dirty, because most writes are to young objects, and
+        // cards for young regions are initialized to dirty.
+        __ if_then(card_val, BoolTest::ne, dirty_card, unlikely); {
+          g1_mark_card(kit, ideal, card_adr, oop_store, alias_idx, index, index_adr, buffer, tf);
         } __ end_if();
       } __ end_if();
     } __ end_if();
@@ -484,10 +477,10 @@ void G1BarrierSetC2::post_barrier(GraphKit* kit,
     // The Object.clone() intrinsic uses this path if !ReduceInitialCardMarks.
     // We don't need a barrier here if the destination is a newly allocated object
     // in Eden. Otherwise, GC verification breaks because we assume that cards in Eden
-    // are set to 'g1_young_gen' (see G1CardTable::verify_g1_young_region()).
+    // are set to dirty (see G1HeapVerifier::verify_dirty_region()).
     assert(!use_ReduceInitialCardMarks(), "can only happen with card marking");
     Node* card_val = __ load(__ ctrl(), card_adr, TypeInt::INT, T_BYTE, Compile::AliasIdxRaw);
-    __ if_then(card_val, BoolTest::ne, young_card); {
+    __ if_then(card_val, BoolTest::ne, dirty_card); {
       g1_mark_card(kit, ideal, card_adr, oop_store, alias_idx, index, index_adr, buffer, tf);
     } __ end_if();
   }

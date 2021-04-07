@@ -249,11 +249,6 @@ void G1BarrierSetAssembler::g1_write_barrier_post(MacroAssembler* masm, Decorato
 
   // Get the address of the card.
   __ lbzx(/*card value*/ tmp3, Rbase, Rcard_addr);
-  __ cmpwi(CCR0, tmp3, (int)G1CardTable::g1_young_card_val());
-  __ beq(CCR0, filtered);
-
-  __ membar(Assembler::StoreLoad);
-  __ lbzx(/*card value*/ tmp3, Rbase, Rcard_addr);  // Reload after membar.
   __ cmpwi(CCR0, tmp3 /* card value */, (int)G1CardTable::dirty_card_val());
   __ beq(CCR0, filtered);
 
@@ -521,14 +516,7 @@ void G1BarrierSetAssembler::generate_c1_post_barrier_runtime_stub(StubAssembler*
   __ add(addr, tmp2, addr);
   __ lbz(tmp, 0, addr); // tmp := [addr + cardtable]
 
-  // Return if young card.
-  __ cmpwi(CCR0, tmp, G1CardTable::g1_young_card_val());
-  __ beq(CCR0, ret);
-
-  // Return if sequential consistent value is already dirty.
-  __ membar(Assembler::StoreLoad);
-  __ lbz(tmp, 0, addr); // tmp := [addr + cardtable]
-
+  // Return if value is already dirty.
   __ cmpwi(CCR0, tmp, G1CardTable::dirty_card_val());
   __ beq(CCR0, ret);
 

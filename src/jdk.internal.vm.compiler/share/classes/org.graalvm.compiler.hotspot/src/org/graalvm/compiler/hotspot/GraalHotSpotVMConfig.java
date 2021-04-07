@@ -637,7 +637,8 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
             g1SATBQueueBufferOffset = javaThreadSatbMarkQueueOffset + satbMarkQueueBufferOffset;
         } else {
             dirtyCardValue = getConstant("CardTable::dirty_card", Byte.class);
-            g1YoungCardValue = getConstant("G1CardTable::g1_young_gen", Byte.class);
+            // g1YoungCardValue is unused.
+            g1YoungCardValue = dirtyCardValue;
             g1SATBQueueMarkingOffset = getConstant("G1ThreadLocalData::satb_mark_queue_active_offset", Integer.class);
             g1SATBQueueIndexOffset = getConstant("G1ThreadLocalData::satb_mark_queue_index_offset", Integer.class);
             g1SATBQueueBufferOffset = getConstant("G1ThreadLocalData::satb_mark_queue_buffer_offset", Integer.class);

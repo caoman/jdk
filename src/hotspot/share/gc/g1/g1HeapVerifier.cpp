@@ -678,11 +678,7 @@ void G1HeapVerifier::verify_dirty_region(HeapRegion* hr) {
   // is dirty.
   G1CardTable* ct = _g1h->card_table();
   MemRegion mr(hr->bottom(), hr->pre_dummy_top());
-  if (hr->is_young()) {
-    ct->verify_g1_young_region(mr);
-  } else {
-    ct->verify_dirty_region(mr);
-  }
+  ct->verify_dirty_region(mr);
 }
 
 class G1VerifyDirtyYoungListClosure : public HeapRegionClosure {

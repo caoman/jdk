@@ -52,8 +52,6 @@ class G1CardTable : public CardTable {
 
 public:
   enum G1CardValues {
-    g1_young_gen = CT_MR_BS_last_reserved << 1,
-
     // During evacuation we use the card table to consolidate the cards we need to
     // scan for roots onto the card table from the various sources. Further it is
     // used to record already completely scanned cards to avoid re-scanning them
@@ -83,10 +81,8 @@ public:
     _listener.set_card_table(this);
   }
 
-  static CardValue g1_young_card_val() { return g1_young_gen; }
   static CardValue g1_scanned_card_val() { return g1_card_already_scanned; }
 
-  void verify_g1_young_region(MemRegion mr) PRODUCT_RETURN;
   void g1_mark_as_young(const MemRegion& mr);
 
   size_t index_for_cardvalue(CardValue const* p) const {

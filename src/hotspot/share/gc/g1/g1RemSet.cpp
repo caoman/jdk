@@ -1468,10 +1468,10 @@ bool G1RemSet::clean_card_before_refine(CardValue** const card_ptr_addr) {
   // ignore the card.
   //
   // The region could be young.  Cards for young regions are
-  // distinctly marked (set to g1_young_gen), so the post-barrier will
-  // filter them out.  However, that marking is performed
-  // concurrently.  A write to a young object could occur before the
-  // card has been marked young, slipping past the filter.
+  // marked as dirty, so the post-barrier will filter them out.
+  // However, that marking is performed concurrently.  A write to a
+  // young object could occur before the card has been marked young,
+  // slipping past the filter.
   //
   // The card could be stale, because the region has been freed since
   // the card was recorded. In this case the region type could be
