@@ -46,6 +46,7 @@
 #include "logging/log.hpp"
 #include "runtime/java.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "runtime/perfData.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/growableArray.hpp"
 #include "utilities/pair.hpp"
@@ -72,6 +73,10 @@ G1Policy::G1Policy(STWGCTimer* gc_timer) :
   _rs_length_prediction(0),
   _pending_cards_at_gc_start(0),
   _concurrent_start_to_mixed(),
+  _epoch_fast_count(NULL),
+  _epoch_fast_time(NULL),
+  _epoch_deferred_count(NULL),
+  _epoch_deferred_time(NULL),
   _collection_set(NULL),
   _g1h(NULL),
   _phase_times_timer(gc_timer),
@@ -107,6 +112,18 @@ void G1Policy::init(G1CollectedHeap* g1h, G1CollectionSet* collection_set) {
   // We may immediately start allocating regions and placing them on the
   // collection set list. Initialize the per-collection set info
   _collection_set->start_incremental_building();
+
+  if (UsePerfData) {
+    EXCEPTION_MARK;
+    _epoch_fast_count = PerfDataManager::create_counter(NULL_NS, "g1_epoch_fast_count",
+                                                        PerfData::U_Events, CHECK);
+    _epoch_fast_time = PerfDataManager::create_counter(NULL_NS, "g1_epoch_fast_time",
+                                                       PerfData::U_Ticks, CHECK);
+    _epoch_deferred_count = PerfDataManager::create_counter(NULL_NS, "g1_epoch_deferred_count",
+                                                            PerfData::U_Events, CHECK);
+    _epoch_deferred_time = PerfDataManager::create_counter(NULL_NS, "g1_epoch_deferred_time",
+                                                           PerfData::U_Ticks, CHECK);
+  }
 }
 
 void G1Policy::note_gc_start() {
@@ -494,6 +511,13 @@ void G1Policy::record_concurrent_refinement_stats() {
   log_refinement_stats("Mutator", mut_stats);
   log_refinement_stats("Concurrent", cr_stats);
   log_refinement_stats("Total", total_stats);
+
+  if (UsePerfData) {
+    _epoch_fast_count->inc(total_stats.epoch_stats()->fast_syncs());
+    _epoch_fast_time->inc(total_stats.epoch_stats()->fast_sync_time().nanoseconds());
+    _epoch_deferred_count->inc(total_stats.epoch_stats()->deferred_syncs());
+    _epoch_deferred_time->inc(total_stats.epoch_stats()->deferred_sync_time().nanoseconds());
+  }
 
   // Record the rate at which cards were refined.
   // Don't update the rate if the current sample is empty or time is zero.

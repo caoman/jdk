@@ -35,6 +35,7 @@
 #include "gc/g1/g1Predictions.hpp"
 #include "gc/g1/g1YoungGenSizer.hpp"
 #include "gc/shared/gcCause.hpp"
+#include "runtime/perfDataTypes.hpp"
 #include "utilities/pair.hpp"
 
 // A G1Policy makes policy decisions that determine the
@@ -105,6 +106,11 @@ class G1Policy: public CHeapObj<mtGC> {
   size_t _pending_cards_at_gc_start;
 
   G1ConcurrentStartToMixedTimeTracker _concurrent_start_to_mixed;
+
+  PerfCounter* _epoch_fast_count;
+  PerfCounter* _epoch_fast_time;
+  PerfCounter* _epoch_deferred_count;
+  PerfCounter* _epoch_deferred_time;
 
   bool should_update_surv_rate_group_predictors() {
     return collector_state()->in_young_only_phase() && !collector_state()->mark_or_rebuild_in_progress();
