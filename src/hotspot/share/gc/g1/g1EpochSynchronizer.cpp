@@ -84,6 +84,15 @@ public:
 // TODO: Confirm with eosterlund@ if this is correct.
 bool G1EpochSynchronizer::maybe_in_java_state(JavaThread* jt) {
   JavaThreadState state = jt->thread_state();
+  if (G1EpochSyncWithInVMState) {
+    return (
+        state == _thread_in_Java ||
+        state == _thread_in_native_trans ||
+        state == _thread_in_vm_trans ||
+        state == _thread_in_vm ||
+        state == _thread_new_trans ||
+        state == _thread_blocked_trans);
+  }
   return (state == _thread_in_Java ||
           state == _thread_in_native_trans ||
           state == _thread_in_vm_trans);

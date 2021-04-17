@@ -139,6 +139,9 @@
   product(bool, G1TestEpochSyncInConcRefinement, false,                     \
           "Test EpochSynchronizer in concurrent refinement.")               \
                                                                             \
+  product(bool, G1EpochSyncWithInVMState, false,                            \
+          "Synchronize with threads in VM state in epoch sync.")            \
+                                                                            \
   product(intx, G1RSetUpdatingPauseTimePercent, 10,                         \
           "A target percentage of time that is allowed to be spend on "     \
           "process RS update buffers during the collection pause.")         \
