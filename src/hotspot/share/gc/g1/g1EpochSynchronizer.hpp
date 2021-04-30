@@ -92,10 +92,13 @@ class G1EpochSynchronizer {
     PaddedCounter() : _counter(0) {}
   };
 
+  // Use a smaller threshold in debug build, to test epoch resetting code.
   static const uintx _EPOCH_RESET_THRESHOLD = DEBUG_ONLY(512) NOT_DEBUG(max_uintx / 4 * 3);
 
   // Timeout threshold for synchronize().
-  static const jlong _SYNCHRONIZE_WAIT_NS = 3 * NANOSECS_PER_MILLISEC; // 3 millis
+  // Use a smaller threshold in debug build, in order to stress-test code paths
+  // for deferred queue in G1DirtyCardQueueSet.
+  static const jlong _SYNCHRONIZE_WAIT_NS = DEBUG_ONLY(3) NOT_DEBUG(3 * NANOSECS_PER_MILLISEC); // 3 millis
 
   // The global epoch that each Java thread will copy to its local epoch.
   static PaddedCounter _global_epoch;
