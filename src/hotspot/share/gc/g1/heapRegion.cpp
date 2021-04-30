@@ -36,6 +36,7 @@
 #include "gc/g1/heapRegionManager.inline.hpp"
 #include "gc/g1/heapRegionRemSet.inline.hpp"
 #include "gc/g1/heapRegionTracer.hpp"
+#include "gc/shared/cardTable.hpp"
 #include "gc/shared/genOopClosures.inline.hpp"
 #include "logging/log.hpp"
 #include "logging/logStream.hpp"
@@ -570,6 +571,18 @@ public:
 };
 
 class VerifyRemSetClosure : public G1VerificationClosure {
+  using CardValue = G1CardTable::CardValue;
+
+  static bool dirty_or_deferred(const CardValue* card) {
+    CardValue cv = *card;
+    if (cv == G1CardTable::dirty_card_val()) {
+      return true;
+    }
+    // Deferred card could be cleaned but unrefined.
+    // They will to be processed by G1 like dirty cards when needed.
+    return G1BarrierSet::dirty_card_queue_set().card_is_deferred(card);
+  }
+
 public:
   VerifyRemSetClosure(G1CollectedHeap* g1h, VerifyOption vo) : G1VerificationClosure(g1h, vo) {}
   virtual void do_oop(narrowOop* p) { do_oop_work(p); }
@@ -595,15 +608,14 @@ public:
         from != to &&
         !to->is_pinned() &&
         to->rem_set()->is_complete()) {
-        jbyte cv_obj = *_ct->byte_for_const(_containing_obj);
-        jbyte cv_field = *_ct->byte_for_const(p);
-        const jbyte dirty = G1CardTable::dirty_card_val();
+        const CardValue* c_obj = _ct->byte_for_const(_containing_obj);
+        const CardValue* c_field = _ct->byte_for_const(p);
 
         bool is_bad = !(from->is_young()
           || to->rem_set()->contains_reference(p)
           || (_containing_obj->is_objArray() ?
-                cv_field == dirty :
-                cv_obj == dirty || cv_field == dirty));
+                dirty_or_deferred(c_field) :
+                dirty_or_deferred(c_obj) || dirty_or_deferred(c_field)));
         if (is_bad) {
           MutexLocker x(ParGCRareEvent_lock,
             Mutex::_no_safepoint_check_flag);
@@ -623,7 +635,10 @@ public:
           if (oopDesc::is_oop(obj)) {
             obj->print_on(&ls);
           }
-          log.error("Obj head CTE = %d, field CTE = %d.", cv_obj, cv_field);
+          log.error("Obj head CTE = %d, field CTE = %d.", *c_obj, *c_field);
+          log.error("Card deferred? obj head: %d, field: %d.",
+                    G1BarrierSet::dirty_card_queue_set().card_is_deferred(c_obj),
+                    G1BarrierSet::dirty_card_queue_set().card_is_deferred(c_field));
           log.error("----------");
           _failures = true;
           _n_failures++;

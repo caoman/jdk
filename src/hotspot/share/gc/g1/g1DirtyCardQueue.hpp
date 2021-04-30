@@ -418,6 +418,10 @@ public:
 
   // Discard artificial increase of mutator refinement threshold.
   void discard_max_cards_padding();
+
+  // Check if deferred queue contains a given card address.
+  // Used for heap verification.
+  bool card_is_deferred(const CardValue* card_ptr);
 };
 
 #endif // SHARE_GC_G1_G1DIRTYCARDQUEUE_HPP

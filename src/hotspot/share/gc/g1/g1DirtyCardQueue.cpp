@@ -535,6 +535,23 @@ G1DirtyCardQueueSet::HeadTail G1DirtyCardQueueSet::take_all_deferred_buffers() {
   return HeadTail(tail, head);
 }
 
+bool G1DirtyCardQueueSet::card_is_deferred(const CardValue* card_ptr) {
+  assert_at_safepoint();
+  BufferAndEpoch* p = _deferred.top();
+  while (p != NULL) {
+    BufferNode* node = p->node();
+    CardTable::CardValue** buffer = reinterpret_cast<CardTable::CardValue**>(
+        BufferNode::make_buffer_from_node(node));
+    for(size_t i = node->index(); i < buffer_size(); ++i) {
+      if (buffer[i] == card_ptr) {
+        return true;
+      }
+    }
+    p = p->next();
+  }
+  return false;
+}
+
 class G1RefineBufferedCards : public StackObj {
   typedef bool (G1RemSet::*CardFilter)(CardTable::CardValue** const card_ptr_addr);
   BufferNode* const _node;
