@@ -38,13 +38,13 @@ class JavaThread;
 class G1EpochUpdater: public AllStatic {
 
   static inline void update_epoch_internal(Thread* thread) {
-    // We must not update epoch inside a safepoint, in order to avoid
-    // atomicity violation with resetting epoch at a safepoint.
-    assert_not_at_safepoint();
+    // We cannot guarantee that this function is never executed inside a safepoint.
+    // Thus it is tricky to implement resetting of all epoch counters (e.g. use a
+    // VM operation executed in a safepoint), which could have atomicity violation
+    // as this function could execute concurrently.
     assert(thread->is_Java_thread(), "must be a Java thread");
     uintx global_epoch = G1EpochSynchronizer::global_epoch();
     volatile uintx& local_epoch = G1ThreadLocalData::epoch(thread);
-    assert(Atomic::load_acquire(&local_epoch) <= global_epoch, "Epoch overflow");
     Atomic::release_store(&local_epoch, global_epoch);
   }
 

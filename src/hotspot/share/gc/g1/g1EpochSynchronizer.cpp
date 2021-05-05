@@ -24,14 +24,12 @@
  */
 
 #include "precompiled.hpp"
-#include "gc/g1/g1EpochResetTask.hpp"
 #include "gc/g1/g1EpochSynchronizer.hpp"
 #include "gc/g1/g1EpochUpdater.inline.hpp"
 #include "gc/g1/g1CollectedHeap.inline.hpp"
 #include "gc/g1/g1ConcurrentRefine.hpp"
 #include "gc/g1/g1ThreadLocalData.hpp"
 #include "logging/log.hpp"
-// #include "memory/resourceArea.inline.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/thread.hpp"
 #include "runtime/threadSMR.inline.hpp"
@@ -43,7 +41,6 @@
 #define EPOCH_TAGS gc, refine, handshake
 
 G1EpochSynchronizer::PaddedCounter G1EpochSynchronizer::_global_epoch;
-volatile bool G1EpochSynchronizer::_reset_all_epoch_scheduled = false;
 volatile uintx G1EpochSynchronizer::_global_frontier = 0;
 
 #ifdef ASSERT
@@ -89,6 +86,14 @@ bool G1EpochSynchronizer::maybe_in_java_state(JavaThread* jt) {
           state == _thread_in_vm_trans);
 }
 
+bool G1EpochSynchronizer::frontier_happens_before(uintx f1, uintx f2) {
+  // Support wrap-around due to overflow by comparing difference with max_uintx / 2.
+  // Epoch counters are updated frequently, so it is safe to assume that a responsive
+  // thread will never have a epoch counter that lags behind by more than max_uintx / 2.
+  // Also note that if f1 == f2, this function should return false.
+  return (f1 - f2) > (max_uintx / 2);
+}
+
 class G1FindMinEpochAndCollectThreadsClosure : public ThreadClosure {
 
   bool _valid_min;
@@ -120,9 +125,12 @@ public:
     JavaThread* jt = static_cast<JavaThread*>(thread);
     if (G1EpochSynchronizer::maybe_in_java_state(jt)) {
       uintx epoch = Atomic::load_acquire(&G1ThreadLocalData::epoch(thread));
-      _min_epoch = MIN2(_min_epoch, epoch);
+      if (G1EpochSynchronizer::frontier_happens_before(epoch, _min_epoch)) {
+        _min_epoch = epoch;
+      }
       _valid_min = true;
-      if (_collect_threads && epoch < _required_frontier) {
+      if (_collect_threads &&
+          G1EpochSynchronizer::frontier_happens_before(epoch, _required_frontier)) {
         _threads->append(jt);
       }
     }
@@ -143,7 +151,6 @@ uintx G1EpochSynchronizer::start_synchronizing() {
   // Atomic:add() provides full fence, which is required by refinement, and also
   // for epoch synchronization.
   uintx required_frontier = Atomic::add(&_global_epoch._counter, static_cast<uintx>(1));
-  handle_overflow(required_frontier);
   log_trace(EPOCH_TAGS)("%s: start_synchronizing to frontier " UINTX_FORMAT,
       Thread::current()->name(), required_frontier);
   return required_frontier;
@@ -151,14 +158,14 @@ uintx G1EpochSynchronizer::start_synchronizing() {
 
 void G1EpochSynchronizer::update_global_frontier(uintx latest_frontier) {
   uintx global_frontier = Atomic::load_acquire(&_global_frontier);
-  if (global_frontier < latest_frontier) {
+  if (frontier_happens_before(global_frontier, latest_frontier)) {
     Atomic::cmpxchg(&_global_frontier, global_frontier, latest_frontier);
   }
 }
 
 bool G1EpochSynchronizer::check_frontier_helper(uintx latest_frontier,
                                                 uintx required_frontier) {
-  if (latest_frontier >= required_frontier) {
+  if (!frontier_happens_before(required_frontier, latest_frontier)) {
     log_trace(EPOCH_TAGS)("%s: frontier synced: " UINTX_FORMAT " >= " UINTX_FORMAT,
         Thread::current()->name(), latest_frontier, required_frontier);
     update_global_frontier(latest_frontier);
@@ -221,7 +228,7 @@ bool G1EpochSynchronizer::check_synchronized_inner() const {
 
   const uintx global_frontier = Atomic::load_acquire(&_global_frontier);
   const uintx required_frontier = _required_frontier;
-  if (global_frontier >= required_frontier) {
+  if (!frontier_happens_before(required_frontier, global_frontier)) {
     return true;
   }
 
@@ -267,44 +274,6 @@ bool G1EpochSynchronizer::synchronize() const {
     }
   }
   return true;
-}
-
-class G1ResetEpochClosure : public ThreadClosure {
-public:
-  void do_thread(Thread* thread) {
-    assert(thread->is_Java_thread(), "must be a Java thread");
-    G1ThreadLocalData::epoch(thread) = 0;
-  }
-};
-
-void G1EpochSynchronizer::reset_all_epoch() {
-  assert_at_safepoint();
-  assert(Thread::current()->is_VM_thread(), "sanity");
-  log_info(EPOCH_TAGS)("Resetting global epoch at " UINTX_FORMAT, _global_epoch._counter);
-  _global_epoch._counter = 0;
-  _global_frontier = 0;
-  size_t deferred_sync = G1BarrierSet::dirty_card_queue_set().reset_epoch_in_deferred_buffer();
-  G1ResetEpochClosure cl;
-  Threads::java_threads_do(&cl);
-  _reset_all_epoch_scheduled = false;
-  // All pending synchronizations must be from deferred buffers.
-  // Otherwise this reset conflicts with other pending synchronization,
-  // making them unnecessarily wait for the global frontier to reach the
-  // large value before the reset.
-  assert(_pending_sync == deferred_sync,
-         "pending_sync(" SIZE_FORMAT ") != deferred_sync(" SIZE_FORMAT ")",
-         _pending_sync, deferred_sync);
-}
-
-void G1EpochSynchronizer::handle_overflow(uintx required_frontier) {
-  if (required_frontier > _EPOCH_RESET_THRESHOLD &&
-      !Atomic::load(&_reset_all_epoch_scheduled)) {
-    if (Atomic::cmpxchg(&_reset_all_epoch_scheduled, false, true) == false) {
-      log_info(EPOCH_TAGS)("%s: Request to reset global epoch at " UINTX_FORMAT,
-          Thread::current()->name(), required_frontier);
-      G1EpochResetTask::schedule();
-    }
-  }
 }
 
 #ifdef ASSERT

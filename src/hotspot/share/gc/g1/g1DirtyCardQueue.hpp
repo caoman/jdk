@@ -350,7 +350,6 @@ public:
   virtual void enqueue_completed_buffer(BufferNode* node);
 
   void enqueue_deferred_buffer(BufferNode* node, const G1EpochSynchronizer& syncer);
-  size_t reset_epoch_in_deferred_buffer();
 
   // Upper bound on the number of cards currently in in this queue set.
   // Read without synchronization.  The value may be high because there
