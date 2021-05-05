@@ -40,7 +40,6 @@
 #include "gc/g1/g1ConcurrentRefineThread.hpp"
 #include "gc/g1/g1ConcurrentMarkThread.inline.hpp"
 #include "gc/g1/g1DirtyCardQueue.hpp"
-#include "gc/g1/g1EpochResetTask.hpp"
 #include "gc/g1/g1EvacStats.inline.hpp"
 #include "gc/g1/g1FullCollector.hpp"
 #include "gc/g1/g1GCParPhaseTimesTracker.hpp"
@@ -1747,8 +1746,6 @@ jint G1CollectedHeap::initialize() {
 
   _free_card_set_memory_task = new G1CardSetFreeMemoryTask("Card Set Free Memory Task");
   _service_thread->register_task(_free_card_set_memory_task);
-
-  G1EpochResetTask::initialize();
 
   {
     G1DirtyCardQueueSet& dcqs = G1BarrierSet::dirty_card_queue_set();

@@ -484,20 +484,6 @@ bool G1DirtyCardQueueSet::get_and_synchronize_deferred_buffer(BufferNode** node_
   return !yielded;
 }
 
-// Reset epoch for each deferred buffer.
-size_t G1DirtyCardQueueSet::reset_epoch_in_deferred_buffer() {
-  assert_at_safepoint();
-  assert(Thread::current()->is_VM_thread(), "invariant");
-  size_t count = 0;
-  BufferAndEpoch* b = _deferred.top();
-  while (b != NULL) {
-    b->syncer().reset();
-    ++count;
-    b = b->next();
-  }
-  return count;
-}
-
 G1DirtyCardQueueSet::HeadTail G1DirtyCardQueueSet::take_all_deferred_buffers() {
   assert_at_safepoint(); // Must called during a collection pause.
   _deferred_deallocator.deallocate_all_pending();

@@ -92,9 +92,6 @@ class G1EpochSynchronizer {
     PaddedCounter() : _counter(0) {}
   };
 
-  // Use a smaller threshold in debug build, to test epoch resetting code.
-  static const uintx _EPOCH_RESET_THRESHOLD = DEBUG_ONLY(512) NOT_DEBUG(max_uintx / 4 * 3);
-
   // Timeout threshold for synchronize().
   // Use a smaller threshold in debug build, in order to stress-test code paths
   // for deferred queue in G1DirtyCardQueueSet.
@@ -106,20 +103,17 @@ class G1EpochSynchronizer {
   // The largest global epoch that we know all Java threads has copied.
   // _global_epoch >= _global_frontier should always be true.
   static volatile uintx _global_frontier;
-  static volatile bool _reset_all_epoch_scheduled;
 
   DEBUG_ONLY(static volatile size_t _pending_sync;)
 
   uintx _required_frontier;
 
+  static inline bool frontier_happens_before(uintx f1, uintx f2);
+
   // Updates _global_frontier to MAX(_global_frontier, latest_frontier)
   static void update_global_frontier(uintx latest_frontier);
 
   static bool check_frontier_helper(uintx latest_frontier, uintx required_frontier);
-
-  // Checks the required_frontier, and possibly schedule an asynchronous
-  // task to reset all epoch and frontier counters.
-  static void handle_overflow(uintx required_frontier);
 
   static uintx start_synchronizing();
 
@@ -132,10 +126,6 @@ class G1EpochSynchronizer {
 public:
   // Load and return the global_epoch.
   static uintx global_epoch();
-
-  // Reset all epochs and global frontier.
-  // Only executed in a safepoint by VM thread.
-  static void reset_all_epoch();
 
   // Copy constructor.
   G1EpochSynchronizer(const G1EpochSynchronizer& other) :
@@ -159,10 +149,6 @@ public:
   // Otherwise, it reached the timeout threshold while waiting,
   // and asynchronous handshake has been issued.
   bool synchronize() const;
-
-  void reset() {
-    _required_frontier = 0;
-  }
 
   static void dec_pending_sync() NOT_DEBUG_RETURN;
   DEBUG_ONLY(static void verify_before_collection_pause(size_t deferred_length);)
