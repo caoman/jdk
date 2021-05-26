@@ -123,7 +123,7 @@ void G1EpochSynchronizer::update_global_frontier(uintx latest_frontier) {
 
 bool G1EpochSynchronizer::check_frontier_helper(uintx latest_frontier,
                                                 uintx required_frontier) {
-  if (!frontier_happens_before(required_frontier, latest_frontier)) {
+  if (!frontier_happens_before(latest_frontier, required_frontier)) {
     log_trace(EPOCH_TAGS)("%s: frontier synced: " UINTX_FORMAT " >= " UINTX_FORMAT,
         Thread::current()->name(), latest_frontier, required_frontier);
     update_global_frontier(latest_frontier);
@@ -185,7 +185,9 @@ bool G1EpochSynchronizer::check_synchronized_inner() const {
 
   const uintx global_frontier = Atomic::load_acquire(&_global_frontier);
   const uintx required_frontier = _required_frontier;
-  if (!frontier_happens_before(required_frontier, global_frontier)) {
+  if (!frontier_happens_before(global_frontier, required_frontier)) {
+    log_trace(EPOCH_TAGS)("%s: global frontier already synced: " UINTX_FORMAT " >= " UINTX_FORMAT,
+        Thread::current()->name(), global_frontier, required_frontier);
     return true;
   }
 

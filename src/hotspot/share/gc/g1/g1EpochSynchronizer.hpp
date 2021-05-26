@@ -108,6 +108,7 @@ class G1EpochSynchronizer {
 
   uintx _required_frontier;
 
+  // Returns true if f1 is logically strictly smaller than f2.
   static inline bool frontier_happens_before(uintx f1, uintx f2);
 
   // Updates _global_frontier to MAX(_global_frontier, latest_frontier)
