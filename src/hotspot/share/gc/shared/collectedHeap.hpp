@@ -337,6 +337,8 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // another thread might want to ensure its roots are in a sane state.
   virtual bool uses_stack_watermark_barrier() const { return false; }
 
+  // TODO: Add a barrier_complete() interface to wrap the G1 epoch counter update.
+
   // Perform a collection of the heap; intended for use in implementing
   // "System.gc".  This probably implies as full a collection as the
   // "CollectedHeap" supports.

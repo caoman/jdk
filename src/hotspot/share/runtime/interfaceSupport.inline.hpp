@@ -173,6 +173,7 @@ class ThreadInVMfromJava : public ThreadStateTransition {
     // where we can't tolerate them. See bugs: 4324348, 4854693, 4998314, 5040492, 5050705.
     if (_thread->has_special_runtime_exit_condition()) _thread->handle_special_runtime_exit_condition(_check_asyncs);
 
+    // TODO: Evaluate how much difference this update makes.
     G1GC_ONLY(if (UseG1GC) { G1EpochUpdater::update_epoch_self(_thread); })
   }
 };

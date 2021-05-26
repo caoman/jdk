@@ -88,7 +88,7 @@ class HandshakeState {
   // Set to the thread executing the handshake operation.
   Thread* volatile _active_handshaker;
 
-  bool claim_handshake();
+  bool claim_handshake(bool examine_queue);
   bool possibly_can_process_handshake();
   bool can_process_handshake();
 
@@ -136,6 +136,28 @@ class HandshakeState {
     _succeeded,
     _number_states
   };
+
+  // RAII object for safely processing handshake or other work on behalf of
+  // a blocked target thread. The precondition to use DelegateProcessingScope
+  // is to arm the target thread's local poll.
+  class DelegateProcessingScope : public StackObj {
+    HandshakeState* const _state;
+    ProcessResult _result;
+   public:
+    // If examine_queue is true, this scope is used for handshake operations.
+    // Otherwise, this scope is for work unrelated to handshake.
+    DelegateProcessingScope(HandshakeState* state, bool examine_queue);
+    ~DelegateProcessingScope();
+
+    // result() will return "_processed" if the caller can proceed
+    // to process the handshake or do the work on behalf of the blocked
+    // thread. Any other value indicates a unsafe state, and the caller
+    // should abort.
+    ProcessResult result() const {
+      return _result;
+    }
+  };
+
   ProcessResult try_process(HandshakeOperation* match_op);
 
   Thread* active_handshaker() const { return Atomic::load(&_active_handshaker); }

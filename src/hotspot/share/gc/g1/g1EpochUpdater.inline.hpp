@@ -49,6 +49,7 @@ class G1EpochUpdater: public AllStatic {
   }
 
 public:
+  // TODO: Provide fence-less version of the update.
   static inline void update_epoch_self(Thread* thread) {
     assert(thread == Thread::current(), "epoch is updated by a remote thread");
     update_epoch_internal(thread);

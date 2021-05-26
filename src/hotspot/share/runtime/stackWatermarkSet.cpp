@@ -24,7 +24,6 @@
 
 #include "precompiled.hpp"
 #include "logging/log.hpp"
-#include "gc/shared/gc_globals.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/safepoint.hpp"
@@ -73,8 +72,6 @@ static void verify_processing_context() {
     assert(state != _thread_in_native, "unsafe thread state");
     assert(state != _thread_blocked, "unsafe thread state");
   } else if (thread->is_VM_thread()) {
-  } else if (UseG1GC && thread->is_ConcurrentGC_thread()) {
-    // Concurrent refinement threads could reach here.
   } else {
     assert_locked_or_safepoint(Threads_lock);
   }

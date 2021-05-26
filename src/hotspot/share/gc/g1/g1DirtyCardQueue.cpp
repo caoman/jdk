@@ -441,6 +441,7 @@ G1DirtyCardQueueSet::BufferAndEpoch* G1DirtyCardQueueSet::dequeue_deferred_buffe
 bool G1DirtyCardQueueSet::get_and_synchronize_deferred_buffer(BufferNode** node_addr,
                                                               G1EpochSynchronizerStats* stats) {
   assert_not_at_safepoint();
+  assert(*node_addr == NULL, "invariant");
   BufferAndEpoch* b = dequeue_deferred_buffer();
   if (b == NULL) {
     return false;
@@ -478,6 +479,7 @@ bool G1DirtyCardQueueSet::get_and_synchronize_deferred_buffer(BufferNode** node_
   }
   stats->inc_deferred_sync_time(Ticks::now() - start_time);
   if (attempts > 0) {
+    // TODO: Why is it always yielded here?
     if (yielded) {
       log_info(gc, refine, ptrqueue)("Yielded in dequeue_deferred after %.2fms",
           (Ticks::now() - start_time).seconds() * MILLIUNITS);

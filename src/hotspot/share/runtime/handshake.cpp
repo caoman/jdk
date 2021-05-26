@@ -41,9 +41,6 @@
 #include "utilities/filterQueue.inline.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/preserveException.hpp"
-#if INCLUDE_G1GC
-#include "gc/g1/g1EpochUpdater.inline.hpp"
-#endif  // INCLUDE_G1GC
 
 class HandshakeOperation : public CHeapObj<mtThread> {
   friend class HandshakeState;
@@ -528,15 +525,16 @@ bool HandshakeState::possibly_can_process_handshake() {
   }
 }
 
-bool HandshakeState::claim_handshake() {
+bool HandshakeState::claim_handshake(bool examine_queue) {
   if (!_lock.try_lock()) {
     return false;
   }
+
   // Operations are added lock free and then the poll is armed.
   // If all handshake operations for the handshakee are finished and someone
   // just adds an operation we may see it here. But if the handshakee is not
   // armed yet it is not safe to proceed.
-  if (have_non_self_executable_operation()) {
+  if (!examine_queue || have_non_self_executable_operation()) {
     OrderAccess::loadload(); // Matches the implicit storestore in add_operation()
     if (SafepointMechanism::local_poll_armed(_handshakee)) {
       return true;
@@ -546,31 +544,51 @@ bool HandshakeState::claim_handshake() {
   return false;
 }
 
-HandshakeState::ProcessResult HandshakeState::try_process(HandshakeOperation* match_op) {
-  if (!has_operation()) {
-    // JT has already cleared its handshake
-    return HandshakeState::_no_operation;
+HandshakeState::DelegateProcessingScope::DelegateProcessingScope(HandshakeState* state, bool examine_queue) :
+  _state(state), _result(_not_safe) {
+  if (examine_queue) {
+    if (!state->has_operation()) {
+      // JT has already cleared its handshake
+      _result = HandshakeState::_no_operation;
+      return;
+    }
   }
 
-  if (!possibly_can_process_handshake()) {
+  if (!state->possibly_can_process_handshake()) {
     // JT is observed in an unsafe state, it must notice the handshake itself
-    return HandshakeState::_not_safe;
+    return;
   }
 
-  // Claim the mutex if there still an operation to be executed.
-  if (!claim_handshake()) {
-    return HandshakeState::_claim_failed;
+  // Claim the mutex if there still an operation to be executed, or if examine_queue is false.
+  if (!state->claim_handshake(examine_queue)) {
+    _result = HandshakeState::_claim_failed;
+    return;
   }
 
   // If we own the mutex at this point and while owning the mutex we
-  // can observe a safe state the thread cannot possibly continue without
-  // getting caught by the mutex.
-  if (!can_process_handshake()) {
-    _lock.unlock();
-    return HandshakeState::_not_safe;
+  // can observe a safe state, as the target thread cannot possibly continue
+  // without getting caught by the mutex.
+  if (!state->can_process_handshake()) {
+    state->_lock.unlock();
+    return;
   }
 
-  G1GC_ONLY(if (UseG1GC) { G1EpochUpdater::update_epoch_self_or_other(_handshakee); })
+  // _processed indicates it is safe to proceed with the work.
+  _result = _processed;
+}
+
+HandshakeState::DelegateProcessingScope::~DelegateProcessingScope() {
+  if (_result == _processed) {
+    _state->_lock.unlock();
+  }
+}
+
+HandshakeState::ProcessResult HandshakeState::try_process(HandshakeOperation* match_op) {
+  DelegateProcessingScope dps(this, true);
+  HandshakeState::ProcessResult pr_ret = dps.result();
+  if (pr_ret != _processed) {
+    return pr_ret;
+  }
 
   Thread* current_thread = Thread::current();
 
@@ -590,8 +608,6 @@ HandshakeState::ProcessResult HandshakeState::try_process(HandshakeOperation* ma
   op->do_handshake(_handshakee); // acquire, op removed after
   set_active_handshaker(NULL);
   remove_op(op);
-
-  _lock.unlock();
 
   log_trace(handshake)("%s(" INTPTR_FORMAT ") executed an op for JavaThread: " INTPTR_FORMAT " %s target op: " INTPTR_FORMAT,
                        current_thread->is_VM_thread() ? "VM Thread" : "JavaThread",

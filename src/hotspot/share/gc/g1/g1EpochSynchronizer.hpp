@@ -83,7 +83,7 @@ class JavaThread;
 //
 class G1EpochSynchronizer {
   // This class only contains an uintx field, so it is used as a value object.
-  friend class G1FindMinEpochAndCollectThreadsClosure;
+  friend class G1FindMinEpochAndArmPollClosure;
 
   struct PaddedCounter {
     DEFINE_PAD_MINUS_SIZE(0, DEFAULT_CACHE_LINE_SIZE, 0);
@@ -118,9 +118,9 @@ class G1EpochSynchronizer {
 
   static uintx start_synchronizing();
 
-  // Starts an async handshake, returns the number of threads to which the
-  // async handshake were issued.
-  size_t async_handshake() const;
+  // Arms the local poll word for each thread that has not been synchronized.
+  // Returns the number of threads armed.
+  size_t arm_local_polls() const;
 
   bool check_synchronized_inner() const;
 
