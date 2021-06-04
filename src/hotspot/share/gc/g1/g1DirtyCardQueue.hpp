@@ -152,6 +152,7 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
   public:
     PausedBuffers();
     DEBUG_ONLY(~PausedBuffers();)
+    DEBUG_ONLY(bool empty() { return Atomic::load(&_plist) == NULL; })
 
     // Thread-safe add the buffer to paused list for next safepoint.
     // precondition: not at safepoint.
@@ -267,7 +268,7 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
   void enqueue_previous_paused_buffers();
   // Transfer all paused buffers to the queue.
   // precondition: at safepoint.
-  void enqueue_all_paused_and_deferred_buffers();
+  void enqueue_all_paused_and_deferred_buffers(bool redirty_deferred_buffers);
 
   void abandon_completed_buffers();
 
@@ -277,9 +278,9 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
   // interferes. It uses GlobalCounter critical section to avoid ABA problem.
   BufferAndEpoch* dequeue_deferred_buffer();
   // Take all buffers from the deferred queue, convert them from
-  // BufferAndEpoch* to BufferNode*, and redirty the buffers.
+  // BufferAndEpoch* to BufferNode*, and optionally redirty the buffers.
   // Not thread-safe, only called in a safepoint.
-  HeadTail take_all_deferred_buffers();
+  HeadTail take_all_deferred_buffers(bool redirty_buffers);
   // Get a buffer from the deferred queue, and store it in *node_addr.
   // Returns true if the deferred buffer is ready to be refined.
   // False means either *node_addr is NULL so that we have nothing to do,
