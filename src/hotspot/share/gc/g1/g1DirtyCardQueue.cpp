@@ -306,13 +306,16 @@ void G1DirtyCardQueueSet::enqueue_previous_paused_buffers() {
   enqueue_buffers_to_completed_aux(_paused.take_previous());
 }
 
-void G1DirtyCardQueueSet::enqueue_all_paused_and_deferred_buffers() {
+void G1DirtyCardQueueSet::enqueue_all_paused_and_deferred_buffers(bool redirty_deferred_buffers) {
   assert_at_safepoint();
   enqueue_buffers_to_completed_aux(_paused.take_all());
-  enqueue_buffers_to_completed_aux(take_all_deferred_buffers());
+  enqueue_buffers_to_completed_aux(take_all_deferred_buffers(redirty_deferred_buffers));
 }
 
 void G1DirtyCardQueueSet::abandon_completed_buffers() {
+  // The full GC has already cleaned the card table at this point,
+  // so we shouldn't redirty deferred cards.
+  enqueue_all_paused_and_deferred_buffers(false);
   G1BufferNodeList list = take_all_completed_buffers();
   BufferNode* buffers_to_delete = list._head;
   while (buffers_to_delete != NULL) {
@@ -342,7 +345,9 @@ void G1DirtyCardQueueSet::merge_bufferlists(G1RedirtyCardsQueueSet* src) {
 }
 
 G1BufferNodeList G1DirtyCardQueueSet::take_all_completed_buffers() {
-  enqueue_all_paused_and_deferred_buffers();
+  assert_at_safepoint();
+  assert(_paused.empty(), "invariant");
+  assert(_deferred.empty(), "invariant");
   verify_num_cards();
   Pair<BufferNode*, BufferNode*> pair = _completed.take_all();
   size_t num_cards = Atomic::load(&_num_cards);
@@ -484,14 +489,14 @@ bool G1DirtyCardQueueSet::get_and_synchronize_deferred_buffer(BufferNode** node_
   return !yielded;
 }
 
-G1DirtyCardQueueSet::HeadTail G1DirtyCardQueueSet::take_all_deferred_buffers() {
+G1DirtyCardQueueSet::HeadTail G1DirtyCardQueueSet::take_all_deferred_buffers(bool redirty_buffers) {
   assert_at_safepoint(); // Must called during a collection pause.
   _deferred_deallocator.deallocate_all_pending();
 
   Pair<BufferAndEpoch*, BufferAndEpoch*> pair = _deferred.take_all();
   BufferAndEpoch* p = pair.first;
   if (p == NULL) {
-    DEBUG_ONLY(G1EpochSynchronizer::verify_before_collection_pause(0);)
+    DEBUG_ONLY(G1EpochSynchronizer::verify_during_collection_pause(0);)
     return HeadTail(NULL, NULL);
   }
 
@@ -504,9 +509,12 @@ G1DirtyCardQueueSet::HeadTail G1DirtyCardQueueSet::take_all_deferred_buffers() {
   while (p != NULL) {
     ++count;
     BufferNode* node = p->node();
-    redirty_unrefined_cards(reinterpret_cast<CardTable::CardValue**>(BufferNode::make_buffer_from_node(node)),
-                            node->index(),
-                            buffer_size());
+    if (redirty_buffers) {
+      redirty_unrefined_cards(
+          reinterpret_cast<CardTable::CardValue**>(BufferNode::make_buffer_from_node(node)),
+          node->index(),
+          buffer_size());
+    }
     node->set_next(last);
     last = node;
 
@@ -517,7 +525,7 @@ G1DirtyCardQueueSet::HeadTail G1DirtyCardQueueSet::take_all_deferred_buffers() {
   assert(last == tail, "invariant");
 
   log_debug(gc, refine, stats)("Epoch Synchronization: unrefined deferred buffers: " SIZE_FORMAT, count);
-  DEBUG_ONLY(G1EpochSynchronizer::verify_before_collection_pause(count);)
+  DEBUG_ONLY(G1EpochSynchronizer::verify_during_collection_pause(count);)
   return HeadTail(tail, head);
 }
 
@@ -848,7 +856,9 @@ void G1DirtyCardQueueSet::concatenate_logs() {
   Threads::threads_do(&closure);
 
   G1BarrierSet::shared_dirty_card_queue().flush();
-  enqueue_all_paused_and_deferred_buffers();
+  // We should redirty deferred cards because they could be cleaned but unrefined,
+  // and an incremental pause does not process clean cards.
+  enqueue_all_paused_and_deferred_buffers(true);
   verify_num_cards();
   set_max_cards(old_limit);
 }

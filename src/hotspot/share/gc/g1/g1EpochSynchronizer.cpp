@@ -237,7 +237,7 @@ void G1EpochSynchronizer::dec_pending_sync() {
   Atomic::dec(&_pending_sync);
 }
 
-void G1EpochSynchronizer::verify_before_collection_pause(size_t deferred_length) {
+void G1EpochSynchronizer::verify_during_collection_pause(size_t deferred_length) {
   assert(_pending_sync == deferred_length,
          "pending_sync(" SIZE_FORMAT ") != deferred_sync(" SIZE_FORMAT ")",
          _pending_sync, deferred_length);

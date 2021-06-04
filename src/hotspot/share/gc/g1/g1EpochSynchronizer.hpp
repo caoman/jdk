@@ -152,7 +152,7 @@ public:
   bool synchronize() const;
 
   static void dec_pending_sync() NOT_DEBUG_RETURN;
-  DEBUG_ONLY(static void verify_before_collection_pause(size_t deferred_length);)
+  DEBUG_ONLY(static void verify_during_collection_pause(size_t deferred_length);)
 };
 
 #endif // SHARE_GC_G1_G1EPOCHSYNCHRONIZER_HPP
