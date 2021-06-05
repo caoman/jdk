@@ -727,6 +727,8 @@ void SafepointSynchronize::block(JavaThread *thread) {
       // Load in wait barrier should not float up
       thread->set_thread_state_fence(_thread_blocked);
 
+      Universe::heap()->on_storeload_fence(thread);
+
       _wait_barrier->wait(static_cast<int>(safepoint_id));
       assert(_state != _synchronized, "Can't be");
 

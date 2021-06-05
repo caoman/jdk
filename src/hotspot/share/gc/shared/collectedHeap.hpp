@@ -211,6 +211,12 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   virtual void safepoint_synchronize_begin() {}
   virtual void safepoint_synchronize_end() {}
 
+  // Callback executed by the Thread thr, after the thread has executed
+  // a runtime operation that implies a StoreLoad (or stronger) fence.
+  // This helps implement synchronization protocols between certain concurrent
+  // GC threads and Java threads.
+  virtual void on_storeload_fence(Thread* thr) {}
+
   void initialize_reserved_region(const ReservedHeapSpace& rs);
 
   virtual size_t capacity() const = 0;
@@ -336,8 +342,6 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // incremental and cooperative. In order for that to work well, mechanisms that stop
   // another thread might want to ensure its roots are in a sane state.
   virtual bool uses_stack_watermark_barrier() const { return false; }
-
-  // TODO: Add a barrier_complete() interface to wrap the G1 epoch counter update.
 
   // Perform a collection of the heap; intended for use in implementing
   // "System.gc".  This probably implies as full a collection as the

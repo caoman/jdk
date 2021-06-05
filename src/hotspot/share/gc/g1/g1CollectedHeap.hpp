@@ -1031,6 +1031,8 @@ public:
   virtual void safepoint_synchronize_begin();
   virtual void safepoint_synchronize_end();
 
+  virtual void on_storeload_fence(Thread* thr);
+
   // Does operations required after initialization has been done.
   void post_initialize();
 

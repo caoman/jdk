@@ -40,6 +40,7 @@
 #include "gc/g1/g1ConcurrentRefineThread.hpp"
 #include "gc/g1/g1ConcurrentMarkThread.inline.hpp"
 #include "gc/g1/g1DirtyCardQueue.hpp"
+#include "gc/g1/g1EpochUpdater.inline.hpp"
 #include "gc/g1/g1EvacStats.inline.hpp"
 #include "gc/g1/g1FullCollector.hpp"
 #include "gc/g1/g1GCParPhaseTimesTracker.hpp"
@@ -1798,6 +1799,10 @@ void G1CollectedHeap::safepoint_synchronize_begin() {
 
 void G1CollectedHeap::safepoint_synchronize_end() {
   SuspendibleThreadSet::desynchronize();
+}
+
+void G1CollectedHeap::on_storeload_fence(Thread* thr) {
+  G1EpochUpdater::update_epoch_self(thr);
 }
 
 void G1CollectedHeap::post_initialize() {

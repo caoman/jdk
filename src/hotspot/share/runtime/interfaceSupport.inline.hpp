@@ -28,6 +28,7 @@
 
 // No interfaceSupport.hpp
 
+#include "gc/shared/collectedHeap.inline.hpp"
 #include "gc/shared/gc_globals.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/mutexLocker.hpp"
@@ -41,9 +42,6 @@
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/preserveException.hpp"
-#if INCLUDE_G1GC
-#include "gc/g1/g1EpochUpdater.inline.hpp"
-#endif  // INCLUDE_G1GC
 
 // Wrapper for all entry points to the virtual machine.
 
@@ -154,7 +152,9 @@ class ThreadInVMForHandshake : public ThreadStateTransition {
     assert(_thread->thread_state() == _thread_in_vm, "should only call when leaving VM after handshake");
     _thread->set_thread_state(_original_state);
 
-    G1GC_ONLY(if (UseG1GC) { G1EpochUpdater::update_epoch_self(_thread); })
+    // TODO: Evaluate how much difference this update makes.
+    // Actually there is no StoreLoad fence here.
+    Universe::heap()->on_storeload_fence(_thread);
   }
 };
 
@@ -174,7 +174,7 @@ class ThreadInVMfromJava : public ThreadStateTransition {
     if (_thread->has_special_runtime_exit_condition()) _thread->handle_special_runtime_exit_condition(_check_asyncs);
 
     // TODO: Evaluate how much difference this update makes.
-    G1GC_ONLY(if (UseG1GC) { G1EpochUpdater::update_epoch_self(_thread); })
+    Universe::heap()->on_storeload_fence(_thread);
   }
 };
 
