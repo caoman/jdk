@@ -466,7 +466,8 @@ bool G1DirtyCardQueueSet::get_and_synchronize_deferred_buffer(BufferNode** node_
   SpinYield spin;
   // TODO: remove this counter and logging message below.
   size_t attempts = 0;
-  while (!yielded && !syncer.check_synchronized()) {
+  ResourceMark rm; // For retrieving thread names in logging.
+  while (!yielded && !syncer.check_synchronized(true)) {
     ++attempts;
     if (SuspendibleThreadSet::should_yield()) {
       redirty_unrefined_cards(reinterpret_cast<CardTable::CardValue**>(BufferNode::make_buffer_from_node(node)),

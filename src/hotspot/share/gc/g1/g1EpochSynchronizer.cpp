@@ -71,13 +71,15 @@ class G1FindMinEpochAndArmPollClosure : public ThreadClosure {
   const uintx _required_frontier;
   uintx _min_epoch;
   size_t _armed_threads;
+  const bool _report_straggler;
 
 public:
-  G1FindMinEpochAndArmPollClosure(uintx required_frontier, bool arm_poll) :
+  G1FindMinEpochAndArmPollClosure(uintx required_frontier, bool arm_poll, bool report_straggler) :
     _arm_poll(arm_poll),
     _required_frontier(required_frontier),
     _min_epoch(max_uintx),
-    _armed_threads(0) {}
+    _armed_threads(0),
+    _report_straggler(report_straggler) {}
 
   void do_thread(Thread* thread) {
     assert(thread->is_Java_thread(), "invariant");
@@ -100,6 +102,12 @@ public:
     }
     if (G1EpochSynchronizer::frontier_happens_before(epoch, _min_epoch)) {
       _min_epoch = epoch;
+    }
+    if (_report_straggler &&
+        G1EpochSynchronizer::frontier_happens_before(epoch, _required_frontier)) {
+      log_debug(EPOCH_TAGS)(
+         "%s: Target thread (%s) is still not synchronized: " UINTX_FORMAT " < " UINTX_FORMAT,
+         Thread::current()->name(), thread->name(), epoch, _required_frontier);
     }
   }
 
@@ -144,7 +152,7 @@ bool G1EpochSynchronizer::check_frontier_helper(uintx latest_frontier,
 size_t G1EpochSynchronizer::arm_local_polls() const {
   const uintx required_frontier = _required_frontier;
 
-  G1FindMinEpochAndArmPollClosure cl(required_frontier, true);
+  G1FindMinEpochAndArmPollClosure cl(required_frontier, true, false);
   for (JavaThreadIteratorWithHandle jtiwh; JavaThread* thread = jtiwh.next(); ) {
     cl.do_thread(thread);
   }
@@ -156,7 +164,7 @@ size_t G1EpochSynchronizer::arm_local_polls() const {
   return armed;
 }
 
-bool G1EpochSynchronizer::check_synchronized_inner() const {
+bool G1EpochSynchronizer::check_synchronized_inner(bool report_straggler) const {
   assert_not_at_safepoint();
 
   Thread* thread = Thread::current();
@@ -178,15 +186,15 @@ bool G1EpochSynchronizer::check_synchronized_inner() const {
 
   // TODO: Perhaps we need to also check for blocked threads and update their epoch here.
   // Sometimes this gets stuck for a while as check_synchronized() is called in a loop.
-  G1FindMinEpochAndArmPollClosure cl(required_frontier, false);
+  G1FindMinEpochAndArmPollClosure cl(required_frontier, false, report_straggler);
   for (JavaThreadIteratorWithHandle jtiwh; JavaThread* thread = jtiwh.next(); ) {
     cl.do_thread(thread);
   }
   return check_frontier_helper(cl.min_epoch(), required_frontier);
 }
 
-bool G1EpochSynchronizer::check_synchronized() const {
-  bool result = check_synchronized_inner();
+bool G1EpochSynchronizer::check_synchronized(bool report_straggler) const {
+  bool result = check_synchronized_inner(report_straggler);
   if(result) {
     dec_pending_sync();
   }

@@ -122,7 +122,7 @@ class G1EpochSynchronizer {
   // Returns the number of threads armed.
   size_t arm_local_polls() const;
 
-  bool check_synchronized_inner() const;
+  bool check_synchronized_inner(bool report_straggler) const;
 
 public:
   // Load and return the global_epoch.
@@ -140,7 +140,7 @@ public:
   // the _required_frontier field.
   // Return true if it has completed, and update global frontier
   // if needed.
-  bool check_synchronized() const;
+  bool check_synchronized(bool report_straggler=false) const;
 
   // Repeatedly check and wait for synchronization to complete,
   // according to the _required_frontier field.
