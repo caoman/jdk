@@ -421,21 +421,14 @@ static void redirty_unrefined_cards(CardTable::CardValue** buffer,
 // Thread-safe attempt to remove and return the first buffer from
 // the _deferred queue. It is very similar to dequeue_completed_buffer().
 G1DirtyCardQueueSet::BufferAndEpoch* G1DirtyCardQueueSet::dequeue_deferred_buffer() {
-  using Status = LockFreeQueuePopStatus;
   Thread* current_thread = Thread::current();
-  while (true) {
+  BufferAndEpoch* pop_result;
+  bool success = false;
+  while (!success) {
     GlobalCounter::CriticalSection cs(current_thread);
-    Pair<Status, G1DirtyCardQueueSet::BufferAndEpoch*> pop_result = _deferred.try_pop();
-    switch (pop_result.first) {
-      case Status::success:
-        return pop_result.second;
-      case Status::operation_in_progress:
-        // Return NULL to prevent retrying for too long.
-        return NULL;
-      case Status::lost_race:
-        break;  // Try again.
-    }
+    success = _deferred.try_pop(&pop_result);
   }
+  return pop_result;
 }
 
 bool G1DirtyCardQueueSet::get_and_synchronize_deferred_buffer(BufferNode** node_addr,
@@ -534,8 +527,8 @@ G1DirtyCardQueueSet::HeadTail G1DirtyCardQueueSet::take_all_deferred_buffers(boo
 
 bool G1DirtyCardQueueSet::card_is_deferred(const CardValue* card_ptr) {
   assert_at_safepoint();
-  BufferAndEpoch* p = _deferred.top();
-  while (p != NULL) {
+  BufferAndEpoch* p = _deferred.first();
+  while (!_deferred.is_end(p)) {
     BufferNode* node = p->node();
     CardTable::CardValue** buffer = reinterpret_cast<CardTable::CardValue**>(
         BufferNode::make_buffer_from_node(node));
@@ -784,7 +777,7 @@ void G1DirtyCardQueueSet::handle_completed_buffer(BufferNode* new_node,
   }
 
   BufferNode* node = get_completed_buffer();
-  if (node == NULL && _deferred.top() == NULL) {
+  if (node == NULL && _deferred.empty()) {
     // Didn't get a buffer to process.
     return;
   }
@@ -806,7 +799,7 @@ bool G1DirtyCardQueueSet::refine_completed_buffer_concurrently(uint worker_id,
   if (Atomic::load(&_num_cards) <= stop_at) return false;
 
   BufferNode* node = get_completed_buffer();
-  if (node == NULL && _deferred.top() == NULL) {
+  if (node == NULL && _deferred.empty()) {
     // Didn't get a buffer to process.
     return false;
   }
