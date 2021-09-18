@@ -147,6 +147,11 @@
 #include "jfr/jfr.hpp"
 #endif
 
+// Ugly code
+#ifdef LINUX
+#include "signals_posix.hpp"
+#endif
+
 // Initialization after module runtime initialization
 void universe_post_module_init();  // must happen after call_initPhase2
 
@@ -2912,6 +2917,8 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
   Management::record_vm_init_completed();
 #endif // INCLUDE_MANAGEMENT
 
+  LINUX_ONLY(PosixSignals::start_async_handler();)
+
   // Signal Dispatcher needs to be started before VMInit event is posted
   os::initialize_jdk_signal_support(CHECK_JNI_ERR);
 
@@ -3377,6 +3384,7 @@ void Threads::destroy_vm() {
   thread->invoke_shutdown_hooks();
 
   before_exit(thread);
+  LINUX_ONLY(PosixSignals::report_async_handler_result();)
 
   thread->exit(true);
 

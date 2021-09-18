@@ -40,6 +40,10 @@ public:
   static int SR_signum;
 
   static int init();
+
+  static void start_async_handler();
+  static void report_async_handler_result();
+
   // The platform dependent parts of the central hotspot signal handler.
   // Returns true if the signal had been recognized and handled, false if not. If true, caller should
   // return from signal handling.

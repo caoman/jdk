@@ -26,8 +26,11 @@
 
 #include "jvm.h"
 #include "logging/log.hpp"
+#include "gc/shared/collectedHeap.inline.hpp"
 #include "runtime/atomic.hpp"
+#include "runtime/frame.inline.hpp"
 #include "runtime/globals.hpp"
+#include "runtime/init.hpp"
 #include "runtime/interfaceSupport.inline.hpp"
 #include "runtime/java.hpp"
 #include "runtime/os.hpp"
@@ -899,6 +902,7 @@ void os::run_periodic_checks() {
   }
 
   check_signal_handler(PosixSignals::SR_signum);
+  check_signal_handler(SIGPROF);
 }
 
 // Helper function for PosixSignals::print_siginfo_...():
@@ -1778,4 +1782,94 @@ int PosixSignals::init() {
   }
 
   return JNI_OK;
+}
+
+static volatile uint async_handler_samples = 0;
+
+void async_sigprof_handler(int signum, siginfo_t *timer_info, void *ucontext) {
+  Thread* raw_thread = Thread::current_or_null();
+  if (raw_thread == NULL || !raw_thread->is_Java_thread()) {
+    return;
+  }
+  JavaThread* thread = static_cast<JavaThread*>(raw_thread);
+  if (thread->is_exiting() || thread->in_deopt_handler() ||
+      Universe::heap()->is_gc_active()) {
+    return;
+  }
+  switch (thread->thread_state()) {
+    case _thread_in_native:
+    case _thread_in_native_trans:
+    case _thread_blocked:
+    case _thread_blocked_trans:
+    case _thread_in_vm:
+    case _thread_in_vm_trans:
+      {
+        frame fr;
+        // param isInJava == false - indicate we aren't in Java code
+        if (thread->pd_get_top_frame_for_signal_handler(&fr, ucontext, false)) {
+          if (thread->has_last_Java_frame()) {
+            assert(fr.pc() != NULL, "pc must be nonzero");
+            Atomic::inc(&async_handler_samples);
+          }
+        }
+      }
+      break;
+    case _thread_in_Java:
+    case _thread_in_Java_trans:
+      {
+        frame fr;
+        // param isInJava == true - indicate we are in Java code
+        if (thread->pd_get_top_frame_for_signal_handler(&fr, ucontext, true)) {
+          assert(fr.pc() != NULL, "pc must be nonzero");
+          Atomic::inc(&async_handler_samples);
+        }
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+void set_profiling_handler() {
+  struct sigaction act;
+  act.sa_handler = nullptr;
+  act.sa_sigaction = &async_sigprof_handler;
+  act.sa_flags = SA_RESTART | SA_SIGINFO;
+  sigemptyset(&act.sa_mask);
+
+  int sig = SIGPROF;
+  if (sigaction(sig, &act, nullptr) != 0) {
+    log_warning(sampling)(
+        "Scheduling profiler action failed: %s", os::strerror(errno));
+  } else {
+    // Save handler setup for later checking
+    vm_handlers.set(sig, &act);
+    do_check_signal_periodically[sig] = true;
+  }
+}
+
+void set_profiling_timer(int usec) {
+  // The timer was a static variable in the Java agent's profile_handler.cc.
+  struct itimerval timer;
+  timer.it_interval.tv_sec = 0;
+  timer.it_interval.tv_usec = usec;
+  timer.it_value = timer.it_interval;
+  if (setitimer(ITIMER_PROF, &timer, nullptr) != 0) {
+    log_warning(sampling)(
+        "Scheduling profiler interval failed: %s", os::strerror(errno));
+  }
+}
+
+void PosixSignals::start_async_handler() {
+  assert(is_init_completed(), "must start after fully initialized");
+  set_profiling_handler();
+  const int interval_us = 2000;
+  set_profiling_timer(interval_us);
+  log_info(sampling)("Profiler started with frequency of %d Hz.",
+                     MICROUNITS / interval_us);
+}
+
+void PosixSignals::report_async_handler_result() {
+  log_info(sampling)("Profiler sampled %u frames",
+                     Atomic::load(&async_handler_samples));
 }
