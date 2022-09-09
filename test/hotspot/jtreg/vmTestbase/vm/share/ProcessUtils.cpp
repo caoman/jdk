@@ -95,6 +95,13 @@ JNIEXPORT jboolean JNICALL Java_vm_share_ProcessUtils_sendCtrlBreak
         }
         return JNI_TRUE;
 #else /* _WIN32 */
+        struct sigaction oact;
+        sigaction(SIGQUIT, (struct sigaction*)NULL, &oact);
+        printf("SIG_IGN = %x\n", SIG_IGN);
+        printf("SIG_DFL = %x\n", SIG_DFL);
+        printf("oact.sa_sigaction = %x\n", oact.sa_sigaction);
+        printf("oact.sa_handler = %x\n", oact.sa_handler);
+
         if (kill(getpid(), SIGQUIT) < 0)
                 return JNI_FALSE;
         return JNI_TRUE;
