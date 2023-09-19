@@ -35,9 +35,6 @@
 #include "utilities/macros.hpp"
 #include "utilities/ostream.hpp"
 #include "unittest.hpp"
-#ifdef _WIN32
-#include "os_windows.hpp"
-#endif
 
 using testing::HasSubstr;
 
@@ -157,6 +154,15 @@ TEST(os, test_random) {
   ASSERT_LT(t, eps) << "bad mean";
   t = (variance - 0.3355) < 0.0 ? -(variance - 0.3355) : variance - 0.3355;
   ASSERT_LT(t, eps) << "bad variance";
+}
+
+TEST(os, test_write) {
+  int fd = os::open("test_file.txt", O_RDWR | O_CREAT | O_TRUNC, 0666);
+  EXPECT_TRUE(fd > 0);
+  const char* data = "test string foo bar";
+  const size_t len = strlen(data);
+  bool result = os::write(fd, data, len);
+  EXPECT_TRUE(result) << "write failed";
 }
 
 #ifdef ASSERT
