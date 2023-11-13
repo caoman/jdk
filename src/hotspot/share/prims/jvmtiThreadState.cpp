@@ -1000,3 +1000,7 @@ void JvmtiThreadState::set_thread(JavaThread* thread) {
   }
   _thread = thread;
 }
+
+void JvmtiThreadState::set_thread_oop(oop thread_oop) {
+  _thread_oop_h.replace(thread_oop);
+}

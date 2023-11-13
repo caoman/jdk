@@ -231,6 +231,8 @@ class JvmtiThreadState : public CHeapObj<mtInternal> {
   inline JvmtiEnvThreadState* head_env_thread_state();
   inline void set_head_env_thread_state(JvmtiEnvThreadState* ets);
 
+  void set_thread_oop(oop thread_oop);
+
  public:
   ~JvmtiThreadState();
 

@@ -89,14 +89,29 @@ inline JvmtiThreadState* JvmtiThreadState::state_for_while_locked(JavaThread *th
     // Don't add a JvmtiThreadState to a thread that is exiting.
     return nullptr;
   }
-  if (state == nullptr || state->get_thread_oop() != thread_oop) {
+
+  if (state == nullptr) {
     // Check if java_lang_Thread already has a link to the JvmtiThreadState.
-    if (thread_oop != nullptr) {  // thread_oop can be null during early VMStart.
+    // thread_oop can be null during early VMStart, or called from
+    // JvmtiSampledObjectAllocEventCollector::start() when an attaching JNI
+    // thread is allocating a java_lang_Thread object.
+    if (thread_oop != nullptr) {
       state = java_lang_Thread::jvmti_thread_state(thread_oop);
     }
     if (state == nullptr) {  // Need to create state.
       state = new JvmtiThreadState(thread, thread_oop);
     }
+    return state;
+  }
+  oop existing_thread_oop = state->get_thread_oop();
+  if (existing_thread_oop != thread_oop) {
+    // Could these assertions fail?
+    assert(existing_thread_oop == nullptr, "existing_thread_oop should be null");
+    assert(java_lang_Thread::jvmti_thread_state(thread_oop) == nullptr, "state from thread_oop should be null");
+    // Don't create a new JvmtiThreadState. Otherwise, we'd need to free the
+    // existing state object to avoid multiple JvmtiThreadStates pointing to the
+    // same thread.
+    state->set_thread_oop(thread_oop);
   }
   return state;
 }
