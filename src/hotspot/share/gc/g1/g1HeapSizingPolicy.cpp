@@ -26,6 +26,7 @@
 #include "gc/g1/g1CollectedHeap.hpp"
 #include "gc/g1/g1HeapSizingPolicy.hpp"
 #include "gc/shared/gc_globals.hpp"
+#include "gc/shared/gcArguments.hpp"
 #include "logging/log.hpp"
 #include "runtime/globals.hpp"
 #include "utilities/debug.hpp"
@@ -244,6 +245,7 @@ size_t G1HeapSizingPolicy::full_collection_resize_amount(bool& expand) {
          minimum_desired_capacity, maximum_desired_capacity);
 
   size_t soft_max_capacity = _g1h->soft_max_capacity();
+  log_debug(gc, ergo, heap)("full_collection_resize_amount: soft_max = %zuB, alignment = %zuB", soft_max_capacity, HeapAlignment);
   // Should not be greater than the soft max capacity. No need to adjust
   // it with respect to the heap min size as it's a lower bound (i.e.,
   // we'll try to make the capacity larger than it, not smaller).
