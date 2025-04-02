@@ -71,7 +71,7 @@ public class TestSoftMaxHeapSize {
 
     System.gc();
     heapSize = getCurrentHeapSize();
-    if (heapSize == SOFT_MAX_HEAP) {
+    if (heapSize != SOFT_MAX_HEAP) {
       throw new RuntimeException(
           "Heap size did not shrink to SoftMaxHeapSize after full GC: heapSize = " + heapSize);
     }
