@@ -29,7 +29,7 @@ package gc.g1;
  * @requires vm.gc.G1
  * @requires vm.opt.ExplicitGCInvokesConcurrent != true
  * @library /test/lib
- * @run main/othervm -Xmx200m -XX:MinHeapSize=4m -XX:MinHeapFreeRatio=99
+ * @run main/othervm -Xlog:gc*,gc+ergo+heap=debug -Xmx200m -XX:MinHeapSize=4m -XX:MinHeapFreeRatio=99
         -XX:MaxHeapFreeRatio=99 gc.g1.TestSoftMaxHeapSize
  * @summary SoftMaxHeapSize should limit G1's heap size when resizing.
  */
@@ -71,7 +71,7 @@ public class TestSoftMaxHeapSize {
 
     System.gc();
     heapSize = getCurrentHeapSize();
-    if (heapSize != SOFT_MAX_HEAP) {
+    if (heapSize == SOFT_MAX_HEAP) {
       throw new RuntimeException(
           "Heap size did not shrink to SoftMaxHeapSize after full GC: heapSize = " + heapSize);
     }
