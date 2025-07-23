@@ -15,7 +15,7 @@ import java.util.Random;
  *
  * <p>Accepted flags:
  *
- * <p>--heap_graph: alloc_size,repeated(allocation_rate,deallocation_rate,start_time): comma
+ * <p>--heap_graph: [alloc_size]repeated(allocation_rate,deallocation_rate,start_time): comma
  * separated
  *
  * <p>--cpu_graph: repeated(cpu_rate,start_time) pairs: comma separated
@@ -204,16 +204,7 @@ final class HeapSimulator {
 
   private static int parseCpuGraph(String cpuGraph, List<CpuPoint> cpuGraphList) {
     int maxCpuRate = 0;
-    String cpuStr =
-        cpuGraph
-            .replace("[", "")
-            .replace("s", "")
-            .replace("b", "")
-            .replace(']', ',')
-            .replace("(", "")
-            .replace(")", "")
-            .replace("+", "")
-            .replace("-", "");
+    String cpuStr = cpuGraph.replace(']', ',').replaceAll("[\\[()sb+\\-]", "");
 
     var cpuStrSplit = cpuStr.split(",");
     if (cpuStrSplit.length % 2 != 0) {
@@ -232,16 +223,7 @@ final class HeapSimulator {
 
   private static List<HeapGraph> parseHeapGraph(String heapGraph) {
     ArrayList<HeapGraph> heapGraphs = new ArrayList<>();
-    String heapFlagStr =
-        heapGraph
-            .replace("[", "")
-            .replace(']', ',')
-            .replace("s", "")
-            .replace("b", "")
-            .replace("(", "")
-            .replace(")", "")
-            .replace("+", "")
-            .replace("-", "");
+    String heapFlagStr = heapGraph.replace(']', ',').replaceAll("[\\[()sb+\\-]", "");
 
     var heapGraphStrs = heapFlagStr.split("/");
     if (heapGraphStrs.length == 0) {
