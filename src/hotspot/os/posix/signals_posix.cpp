@@ -30,6 +30,7 @@
 #include "os_posix.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/globals.hpp"
+#include "runtime/globals_extension.hpp"
 #include "runtime/interfaceSupport.inline.hpp"
 #include "runtime/java.hpp"
 #include "runtime/javaThread.hpp"
@@ -43,6 +44,7 @@
 #include "suspendResume_posix.hpp"
 #include "utilities/checkedCast.hpp"
 #include "utilities/events.hpp"
+#include "utilities/formatBuffer.hpp"
 #include "utilities/ostream.hpp"
 #include "utilities/parseInteger.hpp"
 #include "utilities/vmError.hpp"
@@ -896,7 +898,69 @@ int PosixSignals::install_sigaction_signal_handler(struct sigaction* sigAct,
     sigAct->sa_flags |= SA_ONSTACK;
   }
 #endif
+  if (UseSigAltStack) {
+    switch (sig) {
+      case SIGSEGV:
+      case SIGILL:
+      case SIGBUS:
+      case SIGFPE:
+      case SIGTRAP:
+        sigAct->sa_flags |= SA_ONSTACK;
+        break;
+      default:
+        break;
+    }
+  }
   return sigaction(sig, sigAct, oldSigAct);
+}
+
+// Called by every thread to set up an alternate signal stack.
+void PosixSignals::maybe_setup_alt_sig_stack(OSThread* osthread,
+                                             bool is_attaching) {
+  if (!UseSigAltStack) {
+    return;
+  }
+  assert(Thread::current()->osthread() == osthread, "invariant");
+  uintx tid = os::current_thread_id();
+
+  stack_t old_ss = {};
+  // Check if the attached thread already has an alternate signal stack
+  // installed.
+  if (is_attaching) {
+    if (sigaltstack(nullptr, &old_ss) != 0) {
+      log_warning(os, thread)("Thread %zu: Failed to read current alternate signal stack (%s)",
+                              tid, os::strerror(errno));
+    }
+    if (old_ss.ss_sp != nullptr) {
+      log_info(os, thread)("Thread %zu: Alternate signal stack already exists for attached thread.", tid);
+      return;
+    }
+  }
+
+  stack_t ss;
+  if ((ss.ss_sp = os::malloc(SigAltStackSize, mtInternal)) == nullptr) {
+    vm_exit_out_of_memory(SigAltStackSize, OOM_MALLOC_ERROR,
+                          "allocating for sigaltstack");
+    return;
+  }
+  ss.ss_size = SigAltStackSize;
+  ss.ss_flags = 0;
+  if (sigaltstack(&ss, &old_ss) != 0) {
+    log_warning(os, thread)("Thread %zu: Failed to install alternate signal stack (%s)",
+                            tid,os::strerror(errno));
+    os::free(ss.ss_sp);
+    return;
+  }
+  assert(old_ss.ss_sp == nullptr, "alternate stack already exists");
+  osthread->set_alt_sig_stack(static_cast<address>(ss.ss_sp));
+  log_debug(os, thread)("Thread %zu: alternate signal stack sp=" PTR_FORMAT ", size=%zu",
+                        tid, p2i(ss.ss_sp), ss.ss_size);
+}
+
+void PosixSignals::maybe_free_alt_sig_stack(OSThread* osthread) {
+  if (UseSigAltStack) {
+    os::free(osthread->alt_sig_stack());
+  }
 }
 
 // Will be modified when max signal is changed to be dynamic
@@ -1851,6 +1915,17 @@ void SuspendedThreadTask::internal_do_task() {
 }
 
 int PosixSignals::init() {
+  if (UseSigAltStack) {
+    // SIGSTKSZ and MINSIGSTKSZ may not be constants, so we reference them
+    // here instead of in globals.hpp where SigAltStackSize is defined.
+    if (FLAG_IS_DEFAULT(SigAltStackSize)) {
+      FLAG_SET_DEFAULT(SigAltStackSize, SIGSTKSZ);
+    } else if (SigAltStackSize < MINSIGSTKSZ) {
+      vm_exit_during_initialization(
+          err_msg("SigAltStackSize must be at least %u", MINSIGSTKSZ));
+    }
+  }
+
   // initialize suspend/resume support - must do this before signal_sets_init()
   if (SR_initialize() != 0) {
     vm_exit_during_initialization("SR_initialize failed");

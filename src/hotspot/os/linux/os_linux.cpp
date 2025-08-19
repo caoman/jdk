@@ -837,6 +837,7 @@ static void *thread_native_entry(Thread *thread) {
   }
   // initialize signal mask for this thread
   PosixSignals::hotspot_sigmask(thread);
+  PosixSignals::maybe_setup_alt_sig_stack(osthread, false);
 
   // initialize floating point control register
   os::Linux::init_thread_fpu_state();
@@ -1190,6 +1191,7 @@ bool os::create_attached_thread(JavaThread* thread) {
   // initialize signal mask for this thread
   // and save the caller's signal mask
   PosixSignals::hotspot_sigmask(thread);
+  PosixSignals::maybe_setup_alt_sig_stack(osthread, true);
 
   log_info(os, thread)("Thread attached (tid: %zu, pthread id: %zu"
                        ", stack: " PTR_FORMAT " - " PTR_FORMAT " (%zuK) ).",
@@ -1226,6 +1228,8 @@ void os::free_thread(OSThread* osthread) {
   // Restore caller's signal mask
   sigset_t sigmask = osthread->caller_sigmask();
   pthread_sigmask(SIG_SETMASK, &sigmask, nullptr);
+
+  PosixSignals::maybe_free_alt_sig_stack(osthread);
 
   delete osthread;
 }

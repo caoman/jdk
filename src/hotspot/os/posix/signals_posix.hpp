@@ -62,6 +62,10 @@ public:
   static bool do_suspend(OSThread* osthread);
   static void do_resume(OSThread* osthread);
 
+  // For setting up an alternate signal stack
+  static void maybe_setup_alt_sig_stack(OSThread* osthread, bool is_attaching);
+  static void maybe_free_alt_sig_stack(OSThread* osthread);
+
   // For signal-chaining
   static bool chained_handler(int sig, siginfo_t* siginfo, void* context);
 

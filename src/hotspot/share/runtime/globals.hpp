@@ -1501,6 +1501,13 @@ const int ObjectAlignmentInBytes = 8;
   develop_pd(size_t, JVMInvokeMethodSlack,                                  \
           "Stack space (bytes) required for JVM_InvokeMethod to complete")  \
                                                                             \
+  product(bool, UseSigAltStack, false,                                      \
+          "Set up alternate stack for signal handlers.")                    \
+                                                                            \
+  product(uintx, SigAltStackSize, 0,                                        \
+          "Size for alternate signal stack in bytes. When flag is unset, "  \
+          "the system value of SIGSTKSZ is used.")                          \
+                                                                            \
   /* code cache parameters                                    */            \
   product_pd(size_t, CodeCacheSegmentSize, EXPERIMENTAL,                    \
           "Code cache segment size (in bytes) - smallest unit of "          \
