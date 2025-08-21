@@ -1922,7 +1922,7 @@ int PosixSignals::init() {
       FLAG_SET_DEFAULT(SigAltStackSize, SIGSTKSZ);
     } else if (SigAltStackSize < MINSIGSTKSZ) {
       vm_exit_during_initialization(
-          err_msg("SigAltStackSize must be at least %u", MINSIGSTKSZ));
+          err_msg("SigAltStackSize must be at least %lu", MINSIGSTKSZ));
     }
   }
 
