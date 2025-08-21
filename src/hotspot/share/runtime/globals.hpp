@@ -1501,7 +1501,7 @@ const int ObjectAlignmentInBytes = 8;
   develop_pd(size_t, JVMInvokeMethodSlack,                                  \
           "Stack space (bytes) required for JVM_InvokeMethod to complete")  \
                                                                             \
-  product(bool, UseSigAltStack, false,                                      \
+  product(bool, UseSigAltStack, true,                                      \
           "Set up alternate stack for signal handlers.")                    \
                                                                             \
   product(uintx, SigAltStackSize, 0,                                        \

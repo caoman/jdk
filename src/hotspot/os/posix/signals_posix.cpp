@@ -1921,6 +1921,8 @@ int PosixSignals::init() {
     if (FLAG_IS_DEFAULT(SigAltStackSize)) {
       FLAG_SET_DEFAULT(SigAltStackSize, SIGSTKSZ);
     } else if (SigAltStackSize < static_cast<uintx>(MINSIGSTKSZ)) {
+      FLAG_SET_DEFAULT(SigAltStackSize, 262144);
+      // FLAG_SET_DEFAULT(SigAltStackSize, SIGSTKSZ);
       vm_exit_during_initialization(
           err_msg("SigAltStackSize must be at least %lu", MINSIGSTKSZ));
     }
