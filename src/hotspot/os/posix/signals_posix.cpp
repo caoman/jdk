@@ -1920,7 +1920,7 @@ int PosixSignals::init() {
     // here instead of in globals.hpp where SigAltStackSize is defined.
     if (FLAG_IS_DEFAULT(SigAltStackSize)) {
       FLAG_SET_DEFAULT(SigAltStackSize, SIGSTKSZ);
-    } else if (SigAltStackSize < MINSIGSTKSZ) {
+    } else if (SigAltStackSize < static_cast<uintx>(MINSIGSTKSZ)) {
       vm_exit_during_initialization(
           err_msg("SigAltStackSize must be at least %lu", MINSIGSTKSZ));
     }
