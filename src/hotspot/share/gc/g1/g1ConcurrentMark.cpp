@@ -729,6 +729,11 @@ private:
       return r->end();
     }
 
+    bool is_invalid(G1HeapRegion* r) {
+      // Re-verify that the region index is still active in the heap's committed map.
+      return G1CollectedHeap::heap()->region_at_or_null(r->hrm_index()) == nullptr;
+    }
+
   public:
     G1ClearBitmapHRClosure(G1ConcurrentMark* cm, bool suspendible) :
       G1HeapRegionClosure(),
@@ -740,6 +745,10 @@ private:
     virtual bool do_heap_region(G1HeapRegion* r) {
       if (has_aborted()) {
         return true;
+      }
+
+      if (is_invalid(r)) {
+        return false;
       }
 
       HeapWord* cur = r->bottom();
@@ -763,6 +772,10 @@ private:
         // Abort iteration if necessary.
         if (has_aborted()) {
           return true;
+        }
+
+        if (is_invalid(r)) {
+          return false;
         }
       }
       assert(cur >= end, "Must have completed iteration over the bitmap for region %u.", r->hrm_index());
